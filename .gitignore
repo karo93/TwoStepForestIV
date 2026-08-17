@@ -1,0 +1,14 @@
+cat > .gitignore << 'EOF'
+.Rhistory
+.RData
+.Ruserdata
+.Rproj.user/
+
+results/
+data/raw/
+
+*.RDS
+*.rds
+
+.DS_Store
+EOF
