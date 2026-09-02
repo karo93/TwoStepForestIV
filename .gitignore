@@ -9,6 +9,6 @@ data/raw/
 
 *.RDS
 *.rds
-
+*.dta
 .DS_Store
 EOF
