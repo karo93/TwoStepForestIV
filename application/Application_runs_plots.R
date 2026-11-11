@@ -15,7 +15,7 @@ app_repeats <- lapply(
    X <- data[, 4:65] # here we included all site variables, see readme
    set.seed(i)
     
-    x_preds <- BCF_IV(
+    x_preds <- BCF_IV_app(
       X = X %>% as.data.frame(),
       Y = data$dead28,
       W = data$icu_bed,

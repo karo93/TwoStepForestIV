@@ -51,11 +51,10 @@ for (j in 1:1) {
   lapply(1:500,function(i) {
     print(i)
     data <- dat1 %>% filter(sim_id == i)
-      x_preds <- DRR_IV
-      X = data[, 6:15] %>% as.data.frame(), 
-      Y = data$Y, 
-      W = data$W, 
-      Z = data$Z)
+      x_preds <- DRR_IV(X = data[, 6:15] %>% as.data.frame(),
+                        Y = data$Y, 
+                        W = data$W, 
+                        Z = data$Z)
   
        results <- x_preds$results %>%
        extract_terminal_nodes() %>%

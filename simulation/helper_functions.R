@@ -1,4 +1,4 @@
-adj_method="holm"
+adj_method = "holm"
 extract_terminal_nodes <- function(results) {
   results <- results %>% filter(!is.na(node))
   all_nodes <- results$node
@@ -26,13 +26,14 @@ compute_subgroup_true_CACE <- function(node_condition, data) {
   }
   return(mean(subset_data$CACE, na.rm = TRUE))
 }
-quiet <- function(x) { 
-  sink(tempfile()) 
-  on.exit(sink()) 
-  invisible(force(x)) 
+quiet <- function(x) {
+  sink(tempfile())
+  on.exit(sink())
+  invisible(force(x))
 }
+# functions simulation
 DRRF_IV <- function(Y, W, Z, X) {
-  #Propensity Scores
+  # Propensity Scores
   p.score <- glm(Z ~ ., family = binomial, data = X)
   pihat <- predict(p.score, type = "response")
   # Identify indices for which propensity scores are within [0.1, 0.9]
@@ -44,11 +45,11 @@ DRRF_IV <- function(Y, W, Z, X) {
     X = X[valid_idx, ],
     pihat = pihat[valid_idx]
   )
-  set.seed(42)  
+  set.seed(42)
   # Number of valid observations
   n_valid <- length(subset_data$Y)
-  discovery_id <- sample(n_valid, size = floor(0.5 * n_valid))  # 50% for training
-  inference_id <- setdiff(1:n_valid, discovery_id)  #  50% for validation
+  discovery_id <- sample(n_valid, size = floor(0.5 * n_valid)) # 50% for training
+  inference_id <- setdiff(1:n_valid, discovery_id) #  50% for validation
   # Create train/validation splits
   discovery <- list(
     Y = subset_data$Y[discovery_id],
@@ -68,130 +69,145 @@ DRRF_IV <- function(Y, W, Z, X) {
     Y = inference$Y,
     W = inference$W,
     Z = inference$Z,
-    inference$X,  # This expands the columns of X
+    inference$X, # This expands the columns of X
     pihat = inference$pihat
   )
-  
-  m_model <- randomForest::randomForest(x =as.data.frame(discovery$X), y = discovery$Y)
+
+  m_model <- randomForest::randomForest(x = as.data.frame(discovery$X), y = discovery$Y)
   m_hat <- predict(m_model)
   p.score_itt <- glm(discovery$Z ~ ., family = binomial, data = discovery$X)
   pihat_itt <- predict(p.score_itt, type = "response")
   transformed_Y <- (discovery$Z - pihat_itt) * (discovery$Y - m_hat) / (pihat_itt * (1 - pihat_itt))
   # ITT and PIC estimation
-  itt_model_rf<-grfRemote::regression_forest(Y=transformed_Y,X=as.data.frame(discovery$X),num.trees=2000)
-  itt<- itt_model_rf$predictions
-  pic_model<- grf::causal_forest(Y=discovery$W , W=discovery$Z, X=discovery$X  ,num.trees=2000)
-  
+  itt_model_rf <- grfRemote::regression_forest(Y = transformed_Y, X = as.data.frame(discovery$X), num.trees = 2000)
+  itt <- itt_model_rf$predictions
+  pic_model <- grf::causal_forest(Y = discovery$W, W = discovery$Z, X = discovery$X, num.trees = 2000)
+
   pic <- pic_model$predictions
   epsilon <- 1e-6
-  tauhat <- itt / (pic+epsilon)
+  tauhat <- itt / (pic + epsilon)
 
   exp_data <- as.data.frame(cbind(tauhat, as.data.frame(discovery$X)))
-  
-  #Build a CART with ITT
+
+  # Build a CART with ITT
   fit.tree <- rpart(tauhat ~ .,
-                    data = exp_data,
-                    cp=0.001)
-  
-  
+    data = exp_data,
+    cp = 0.001
+  )
+
+
   rules <- as.numeric(row.names(fit.tree$frame[fit.tree$numresp]))
-  
+
   # Initialize Outputs
- ivMat <- as.data.frame(matrix(NA, nrow = length(rules), ncol = 10))
-  names(ivMat) <- c("node", "CCACE", "pvalue", "Weak_IV_test",
-                    "Pi_obs", "ITT", "Pi_compliers",
-                    "SE", "CI_lower", "CI_upper")
-  lvs <- leaves <- numeric(length(rules)) 
+  ivMat <- as.data.frame(matrix(NA, nrow = length(rules), ncol = 10))
+  names(ivMat) <- c(
+    "node", "CCACE", "pvalue", "Weak_IV_test",
+    "Pi_obs", "ITT", "Pi_compliers",
+    "SE", "CI_lower", "CI_upper"
+  )
+  lvs <- leaves <- numeric(length(rules))
   lvs[unique(fit.tree$where)] <- 1
-  leaves[rules[lvs==1]] <- 1
-  
-  #Run an IV Regression 
-  iv.root <- AER::ivreg(Y ~ W | Z,  
-                        data = inference)
+  leaves[rules[lvs == 1]] <- 1
+
+  # Run an IV Regression
+  iv.root <- AER::ivreg(Y ~ W | Z,
+    data = inference
+  )
   summary <- summary(iv.root, diagnostics = TRUE)
-  iv.effect.root <-  summary$coef[2,1]
-  p.value.root <- summary$coef[2,4]
-  p.value.weak.iv.root <- summary$diagnostics[1,4]
+  iv.effect.root <- summary$coef[2, 1]
+  p.value.root <- summary$coef[2, 4]
+  p.value.weak.iv.root <- summary$diagnostics[1, 4]
   proportion.root <- 1
-  compliers.root <- length(which(inference$Z==inference$W))/nrow(inference$X)
-  itt.root <- iv.effect.root*compliers.root
-  
-  se_ccace.root <- summary$coef[2,2]   # Standard error at root
-  
+  compliers.root <- length(which(inference$Z == inference$W)) / nrow(inference$X)
+  itt.root <- iv.effect.root * compliers.root
+
+  se_ccace.root <- summary$coef[2, 2] # Standard error at root
+
   # Compute 95% Confidence Interval
   ci_lower_root <- iv.effect.root - 1.96 * se_ccace.root
   ci_upper_root <- iv.effect.root + 1.96 * se_ccace.root
-  
-  ivMat[1,] <- c(NA, round(iv.effect.root, 4),
-                 round(p.value.root, 4),
-                 round(p.value.weak.iv.root, 4),
-                 round(proportion.root, 4),
-                 round(itt.root, 4),
-                 round(compliers.root, 4),
-                 round(se_ccace.root, 4),
-                 round(ci_lower_root, 4),
-                 round(ci_upper_root, 4))
-  names(inference) <- paste(names(inference), sep="")
-  
+
+  ivMat[1, ] <- c(
+    NA, round(iv.effect.root, 4),
+    round(p.value.root, 4),
+    round(p.value.weak.iv.root, 4),
+    round(proportion.root, 4),
+    round(itt.root, 4),
+    round(compliers.root, 4),
+    round(se_ccace.root, 4),
+    round(ci_lower_root, 4),
+    round(ci_upper_root, 4)
+  )
+  names(inference) <- paste(names(inference), sep = "")
+
   # Run a loop to get the rules (sub-populations)
   for (i in rules[-1]) {
-    sub <- as.data.frame(matrix(NA, nrow = 1,
-                                ncol = nrow(as.data.frame(path.rpart(fit.tree, node = i, print.it = FALSE))) - 1))
+    sub <- as.data.frame(matrix(NA,
+      nrow = 1,
+      ncol = nrow(as.data.frame(path.rpart(fit.tree, node = i, print.it = FALSE))) - 1
+    ))
     quiet(capture.output(for (j in 1:ncol(sub)) {
       sub[, j] <- as.character(print(as.data.frame(path.rpart(fit.tree, node = i, print.it = FALSE))[j + 1, 1]))
       sub_pop <- noquote(paste(sub, collapse = " & "))
     }))
-    
+
     subset <- with(inference_combined, inference_combined[which(eval(parse(text = sub_pop))), ])
-    
+
     if (nrow(subset) > 3 &&
-        length(unique(subset$W)) > 1 &&
-        length(unique(subset$Z)) > 1 &&
-        all(!is.na(subset$Y)) && all(!is.na(subset$W)) && all(!is.na(subset$Z))) {
-      
+      length(unique(subset$W)) > 1 &&
+      length(unique(subset$Z)) > 1 &&
+      all(!is.na(subset$Y)) && all(!is.na(subset$W)) && all(!is.na(subset$Z))) {
       X_model <- tryCatch(model.matrix(~ W | Z, data = subset), error = function(e) return(NULL))
       if (is.null(X_model) || qr(X_model)$rank < ncol(X_model)) {
         message("Skipping node: ", sub_pop, " due to rank-deficient model matrix.")
         next
       }
-      
-      iv.reg <- tryCatch({
-        AER::ivreg(Y ~ W | Z, data = subset)
-      }, error = function(e) {
-        message("IV regression failed for node: ", sub_pop, " - Skipping...")
-        return(NULL)
-      })
-      
-      if (!is.null(iv.reg)) {
-        summary <- tryCatch({
-          summary(iv.reg, diagnostics = TRUE)
-        }, error = function(e) {
-          message("Summary failed for node: ", sub_pop, " - Skipping...")
+
+      iv.reg <- tryCatch(
+        {
+          AER::ivreg(Y ~ W | Z, data = subset)
+        },
+        error = function(e) {
+          message("IV regression failed for node: ", sub_pop, " - Skipping...")
           return(NULL)
-        })
-        
+        }
+      )
+
+      if (!is.null(iv.reg)) {
+        summary <- tryCatch(
+          {
+            summary(iv.reg, diagnostics = TRUE)
+          },
+          error = function(e) {
+            message("Summary failed for node: ", sub_pop, " - Skipping...")
+            return(NULL)
+          }
+        )
+
         if (!is.null(summary) && summary$df[2] > 0) {
           iv.effect <- summary$coef[2, 1]
           se_ccace <- summary$coef[2, 2]
           ci_lower <- iv.effect - 1.96 * se_ccace
           ci_upper <- iv.effect + 1.96 * se_ccace
-          
+
           p.value <- summary$coef[2, 4]
           p.value.weak.iv <- summary$diagnostics[1, 4]
           compliers <- length(which(subset$Z == subset$W)) / nrow(subset)
           itt <- iv.effect * compliers
           proportion.node <- nrow(subset) / nrow(inference$X)
-          
-          ivMat[i, ] <- c(sub_pop,
-                          round(iv.effect, 4),
-                          round(p.value, 4),
-                          round(p.value.weak.iv, 4),
-                          round(proportion.node, 4),
-                          round(itt, 4),
-                          round(compliers, 4),
-                          round(se_ccace, 4),
-                          round(ci_lower, 4),
-                          round(ci_upper, 4))
+
+          ivMat[i, ] <- c(
+            sub_pop,
+            round(iv.effect, 4),
+            round(p.value, 4),
+            round(p.value.weak.iv, 4),
+            round(proportion.node, 4),
+            round(itt, 4),
+            round(compliers, 4),
+            round(se_ccace, 4),
+            round(ci_lower, 4),
+            round(ci_upper, 4)
+          )
         } else {
           message("Skipping node: ", sub_pop, " due to zero residual degrees of freedom.")
         }
@@ -199,25 +215,24 @@ DRRF_IV <- function(Y, W, Z, X) {
     } else {
       message("Skipping node: ", sub_pop, " due to missing values, small sample size, or lack of variation.")
     }
-  }    
-  # Adjust P.values 
+  }
+  # Adjust P.values
   iv_correction <- cbind(as.data.frame(ivMat), leaves)
-  adj <- round(p.adjust( as.numeric(iv_correction$pvalue[which(iv_correction$leaves==1)]) ,  paste(adj_method)), 5)
-  Adj_pvalue <- rep(NA, length(rules)) 
-  Adj_pvalue[which(iv_correction$leaves==1)] <- adj
-  
+  adj <- round(p.adjust(as.numeric(iv_correction$pvalue[which(iv_correction$leaves == 1)]), paste(adj_method)), 5)
+  Adj_pvalue <- rep(NA, length(rules))
+  Adj_pvalue[which(iv_correction$leaves == 1)] <- adj
+
   # Store Results
   ivResults <- cbind(as.data.frame(ivMat), Adj_pvalue)
-  return(list(results = ivResults, discovery = discovery, inference = inference, pic=pic))
-  
+  return(list(results = ivResults, discovery = discovery, inference = inference, pic = pic))
 }
-BCF_IV <- function(Y, W, Z, X,  binary = FALSE) {
+BCF_IV <- function(Y, W, Z, X, binary = FALSE) {
   ######################################################
   ####         Step 1: Propensity Scores            ####
   ######################################################
-  set.seed(42)  # For reproducibility
-  index <- sample(nrow(X), nrow(X)*0.5, replace=FALSE) #inference Ratio = 0.5
-  
+  set.seed(42) # For reproducibility
+  index <- sample(nrow(X), nrow(X) * 0.5, replace = FALSE) # inference Ratio = 0.5
+
   # Initialize total dataset
   iv.data <- as.data.frame(cbind(Y, W, Z, X))
   names(iv.data)[1:3] <- c("Y", "W", "Z")
@@ -231,229 +246,243 @@ BCF_IV <- function(Y, W, Z, X,  binary = FALSE) {
     data = data.frame(Z = iv.data$Z, iv.data[, x_vars])
   )
   pihat_all <- predict(p.score, type = "response")
-  valid_idx <- which( pihat_all > 0.1 & pihat_all < 0.9)
+  valid_idx <- which(pihat_all > 0.1 & pihat_all < 0.9)
   iv.data <- iv.data[valid_idx, ]
   pihat_all <- pihat_all[valid_idx]
   index <- sample(nrow(iv.data), nrow(iv.data) * 0.5, replace = FALSE)
- 
+
   # Discovery and Inference Samples
-  discovery <- iv.data[-index,]
-  inference <- iv.data[index,]
-  discovery_X<-discovery[,4:13]
- 
+  discovery <- iv.data[-index, ]
+  inference <- iv.data[index, ]
+  discovery_X <- discovery[, 4:13]
+
   # Perform the Bayesian Causal Forest for the Proportion of Compliers (pic)
   pic_bcf <- quiet(bartCause::bartc(discovery$W, discovery$Z, discovery_X, n.samples = 500, n.burn = 500, n.chains = 2L))
   tau_pic <- bartCause::extract(pic_bcf, type = "ite")
   pic <- apply(tau_pic, 2, mean)
-  if (binary == FALSE){
-    
+  if (binary == FALSE) {
     bcf_fit <- SparseBCF::SparseBCF(
       y = discovery$Y,
       z = as.numeric(discovery$Z),
       x_control = as.matrix(discovery_X),
       x_moderate = as.matrix(discovery_X),
       pihat = pihat,
-      sparse = FALSE,  # <<< THIS IS THE KEY
+      sparse = FALSE, # <<< THIS IS THE KEY
       nburn = 500,
       nsim = 500,
       save_trees_mu_dir = NULL,
       save_trees_tau_dir = NULL,
       OOB = FALSE
     )
-    
+
     # Compute Posterior
     tau_post <- bcf_fit$tau
     tauhat <- colMeans(tau_post)
     exp <- as.data.frame(cbind(tauhat, discovery_X))
     fit.tree <- rpart(tauhat ~ .,
-                      data = exp,
-                      cp=0.001,
-                      maxdepth = 2)
+      data = exp,
+      cp = 0.001,
+      maxdepth = 2
+    )
     rules <- as.numeric(row.names(fit.tree$frame[fit.tree$numresp]))
-    
+
     bcfivMat <- as.data.frame(matrix(NA, nrow = length(rules), ncol = 10))
-    names(bcfivMat) <- c("node", "CCACE", "pvalue", "Weak_IV_test",
-                         "Pi_obs", "ITT", "Pi_compliers",
-                         "SE", "CI_lower", "CI_upper")
+    names(bcfivMat) <- c(
+      "node", "CCACE", "pvalue", "Weak_IV_test",
+      "Pi_obs", "ITT", "Pi_compliers",
+      "SE", "CI_lower", "CI_upper"
+    )
     # Generate Leaves Indicator
-    lvs <- leaves <- numeric(length(rules)) 
+    lvs <- leaves <- numeric(length(rules))
     lvs[unique(fit.tree$where)] <- 1
-    leaves[rules[lvs==1]] <- 1
-    
-    #Run an IV Regression on each Node
-    
-    
+    leaves[rules[lvs == 1]] <- 1
+
+    # Run an IV Regression on each Node
+
+
     # Run an IV Regression on the Root
-    iv.root <- AER::ivreg(Y ~ W | Z,  
-                          data = inference)
+    iv.root <- AER::ivreg(Y ~ W | Z,
+      data = inference
+    )
     summary <- summary(iv.root, diagnostics = TRUE)
-    iv.effect.root <-  summary$coef[2,1]
-    p.value.root <- summary$coef[2,4]
-    p.value.weak.iv.root <- summary$diagnostics[1,4]
+    iv.effect.root <- summary$coef[2, 1]
+    p.value.root <- summary$coef[2, 4]
+    p.value.weak.iv.root <- summary$diagnostics[1, 4]
     proportion.root <- 1
-    compliers.root <- length(which(inference$Z==inference$W))/nrow(inference)
-    itt.root <- iv.effect.root*compliers.root
-    se_ccace.root <- summary$coef[2,2]   # Standard error at root
-    
+    compliers.root <- length(which(inference$Z == inference$W)) / nrow(inference)
+    itt.root <- iv.effect.root * compliers.root
+    se_ccace.root <- summary$coef[2, 2] # Standard error at root
+
     # Compute 95% Confidence Interval
     ci_lower_root <- iv.effect.root - 1.96 * se_ccace.root
     ci_upper_root <- iv.effect.root + 1.96 * se_ccace.root
-    bcfivMat[1,] <- c(NA, round(iv.effect.root, 4),
-                      round(p.value.root, 4),
-                      round(p.value.weak.iv.root, 4),
-                      round(proportion.root, 4),
-                      round(itt.root, 4),
-                      round(compliers.root, 4),
-                      round(se_ccace.root, 4),
-                      round(ci_lower_root, 4),
-                      round(ci_upper_root, 4))
-    names(inference) <- paste(names(inference), sep="")
+    bcfivMat[1, ] <- c(
+      NA, round(iv.effect.root, 4),
+      round(p.value.root, 4),
+      round(p.value.weak.iv.root, 4),
+      round(proportion.root, 4),
+      round(itt.root, 4),
+      round(compliers.root, 4),
+      round(se_ccace.root, 4),
+      round(ci_lower_root, 4),
+      round(ci_upper_root, 4)
+    )
+    names(inference) <- paste(names(inference), sep = "")
     # Run a loop to get the rules (sub-populations)
-    
-    for (i in rules[-1]){
+
+    for (i in rules[-1]) {
       # Create a Vector to Store all the Dimensions of a Rule
-      sub <- as.data.frame(matrix(NA, nrow = 1,
-                                  ncol = nrow(as.data.frame(path.rpart(fit.tree, node=i, print.it = FALSE)))-1))
-      quiet(capture.output(for (j in 1:ncol(sub)){
+      sub <- as.data.frame(matrix(NA,
+        nrow = 1,
+        ncol = nrow(as.data.frame(path.rpart(fit.tree, node = i, print.it = FALSE))) - 1
+      ))
+      quiet(capture.output(for (j in 1:ncol(sub)) {
         # Store each Rule as a Sub-population
-        sub[,j] <- as.character(print(as.data.frame(path.rpart(fit.tree,node=i,print.it=FALSE))[j+1,1]))
-        sub_pop <- noquote(paste(sub , collapse = " & "))
+        sub[, j] <- as.character(print(as.data.frame(path.rpart(fit.tree, node = i, print.it = FALSE))[j + 1, 1]))
+        sub_pop <- noquote(paste(sub, collapse = " & "))
       }))
-      
-      subset <- with(inference, inference[which(eval(parse(text=sub_pop))),])
-      
-      if (length(unique(subset$W))!= 1 | length(unique(subset$Z))!= 1){
-        iv.reg <- ivreg(Y ~ W | Z,  
-                        data = subset)
+
+      subset <- with(inference, inference[which(eval(parse(text = sub_pop))), ])
+
+      if (length(unique(subset$W)) != 1 | length(unique(subset$Z)) != 1) {
+        iv.reg <- ivreg(Y ~ W | Z,
+          data = subset
+        )
         summary <- summary(iv.reg, diagnostics = TRUE)
         iv.effect <- summary$coef[2, 1]
         se_ccace <- summary$coef[2, 2]
         ci_lower <- iv.effect - 1.96 * se_ccace
         ci_upper <- iv.effect + 1.96 * se_ccace
-        
+
         p.value <- summary$coef[2, 4]
         p.value.weak.iv <- summary$diagnostics[1, 4]
         compliers <- length(which(subset$Z == subset$W)) / nrow(subset)
         itt <- iv.effect * compliers
-        proportion.node <- nrow(subset)/nrow(inference)
-        
-        bcfivMat[i, ] <- c(sub_pop,
-                           round(iv.effect, 4),
-                           round(p.value, 4),
-                           round(p.value.weak.iv, 4),
-                           round(proportion.node, 4),
-                           round(itt, 4),
-                           round(compliers, 4),
-                           round(se_ccace, 4),
-                           round(ci_lower, 4),
-                           round(ci_upper, 4))
-      }
-      # Delete data
-      rm(subset)  
-    } 
-    # Adjust P.values 
-    bcfiv_correction <- cbind(as.data.frame(bcfivMat), leaves)
-    adj <- round(p.adjust( as.numeric(bcfiv_correction$pvalue[which(bcfiv_correction$leaves==1)]) ,  paste(adj_method)), 5)
-    Adj_pvalue <- rep(NA, length(rules)) 
-    Adj_pvalue[which(bcfiv_correction$leaves==1)] <- adj
-    
-    # Store Results
-    bcfivResults <- cbind(as.data.frame(bcfivMat), Adj_pvalue)
-  }    
-  
+        proportion.node <- nrow(subset) / nrow(inference)
 
-  #Binary Outcomes 
-
-  if (binary == TRUE){
-    # Perform the binary Bayesian Causal Forest for the ITT
-    fit_itt <- quiet(bartCause::bartc(discovery$Y, as.numeric(discovery$Z), as.matrix(discovery_X), n.samples = 300, n.burn = 300, n.chains = 2L))
-    
-    # Get posterior of treatment effects
-    ites <- bartCause::extract(fit_itt, type = "ite")
-    itt <- apply(ites, 2, mean)
-    
-    # Get posterior of treatment effects
-    epsilon <- 1e-6
-    tauhat <- itt / (pic+epsilon)
-    exp <- as.data.frame(cbind(tauhat, discovery_X))
-    
-    #Build a CART
-    fit.tree <- rpart(tauhat ~ .,
-                      data = exp,
-                      maxdepth = 2,
-                      cp=0.001)
-    rules <- as.numeric(row.names(fit.tree$frame[fit.tree$numresp]))
-    
-    # Initialize Outputs
-    bcfivMat <- as.data.frame(matrix(NA, nrow = length(rules), ncol=7))
-    names(bcfivMat) <- c("node", "CCACE", "pvalue", "Weak_IV_test", "Pi_obs", "ITT", "Pi_compliers")
-    
-    # Generate Leaves Indicator
-    lvs <- leaves <- numeric(length(rules)) 
-    lvs[unique(fit.tree$where)] <- 1
-    leaves[rules[lvs==1]] <- 1
-    
-    #Run an IV Regression on each Node
-    iv.root <- AER::ivreg(Y ~ W | Z,  
-                          data = inference)
-    summary <- summary(iv.root, diagnostics = TRUE)
-    iv.effect.root <-  summary$coef[2,1]
-    p.value.root <- summary$coef[2,4]
-    p.value.weak.iv.root <- summary$diagnostics[1,4]
-    proportion.root <- 1
-    compliers.root <- length(which(inference$Z==inference$W))/nrow(inference)
-    itt.root <- iv.effect.root*compliers.root
-    
-    # Store Results for Root
-    bcfivMat[1,] <- c( NA , round(iv.effect.root, 4), round(p.value.root, 4), round(p.value.weak.iv.root, 4), round(proportion.root, 4), round(itt.root, 4), round(compliers.root, 4))
-    
-    # Initialize New Data
-    names(inference) <- paste(names(inference), sep="")
-    
-    # Run a loop to get the rules (sub-populations)
-    for (i in rules[-1]){
-      # Create a Vector to Store all the Dimensions of a Rule
-      sub <- as.data.frame(matrix(NA, nrow = 1,
-                                  ncol = nrow(as.data.frame(path.rpart(fit.tree, node=i, print.it = FALSE)))-1))
-      quiet(capture.output(for (j in 1:ncol(sub)){
-        # Store each Rule as a Sub-population
-        sub[,j] <- as.character(print(as.data.frame(path.rpart(fit.tree,node=i,print.it=FALSE))[j+1,1]))
-        sub_pop <- noquote(paste(sub , collapse = " & "))
-      }))
-      
-      subset <- with(inference, inference[which(eval(parse(text=sub_pop))),])
-      
-      # Run the IV Regression
-      if (length(unique(subset$W))!= 1 | length(unique(subset$Z))!= 1){
-        iv.reg <- AER::ivreg(Y ~ W | Z,  
-                             data = subset)
-        summary <- summary(iv.reg, diagnostics = TRUE)
-        iv.effect <-  summary$coef[2,1]
-        p.value <- summary$coef[2,4]
-        p.value.weak.iv <- summary$diagnostics[1,4]
-        compliers <- length(which(subset$Z==subset$W))/nrow(subset)
-        itt <- iv.effect*compliers
-        
-        # Proportion of observations in the node
-        proportion.node <- nrow(subset)/nrow(inference)
-        bcfivMat[i,] <- c(sub_pop, round(iv.effect, 4), round(p.value, 4), round(p.value.weak.iv, 4), round(proportion.node, 4), round(itt, 4), round(compliers, 4))
+        bcfivMat[i, ] <- c(
+          sub_pop,
+          round(iv.effect, 4),
+          round(p.value, 4),
+          round(p.value.weak.iv, 4),
+          round(proportion.node, 4),
+          round(itt, 4),
+          round(compliers, 4),
+          round(se_ccace, 4),
+          round(ci_lower, 4),
+          round(ci_upper, 4)
+        )
       }
-      
       # Delete data
       rm(subset)
     }
-    
-    # Adjust P.values 
+    # Adjust P.values
     bcfiv_correction <- cbind(as.data.frame(bcfivMat), leaves)
-    adj <- round(p.adjust( as.numeric(bcfiv_correction$pvalue[which(bcfiv_correction$leaves==1)]) ,  paste(adj_method)), 5)
-    Adj_pvalue <- rep(NA, length(rules)) 
-    Adj_pvalue[which(bcfiv_correction$leaves==1)] <- adj
+    adj <- round(p.adjust(as.numeric(bcfiv_correction$pvalue[which(bcfiv_correction$leaves == 1)]), paste(adj_method)), 5)
+    Adj_pvalue <- rep(NA, length(rules))
+    Adj_pvalue[which(bcfiv_correction$leaves == 1)] <- adj
+
+    # Store Results
+    bcfivResults <- cbind(as.data.frame(bcfivMat), Adj_pvalue)
+  }
+
+
+  # Binary Outcomes
+
+  if (binary == TRUE) {
+    # Perform the binary Bayesian Causal Forest for the ITT
+    fit_itt <- quiet(bartCause::bartc(discovery$Y, as.numeric(discovery$Z), as.matrix(discovery_X), n.samples = 300, n.burn = 300, n.chains = 2L))
+
+    # Get posterior of treatment effects
+    ites <- bartCause::extract(fit_itt, type = "ite")
+    itt <- apply(ites, 2, mean)
+
+    # Get posterior of treatment effects
+    epsilon <- 1e-6
+    tauhat <- itt / (pic + epsilon)
+    exp <- as.data.frame(cbind(tauhat, discovery_X))
+
+    # Build a CART
+    fit.tree <- rpart(tauhat ~ .,
+      data = exp,
+      maxdepth = 2,
+      cp = 0.001
+    )
+    rules <- as.numeric(row.names(fit.tree$frame[fit.tree$numresp]))
+
+    # Initialize Outputs
+    bcfivMat <- as.data.frame(matrix(NA, nrow = length(rules), ncol = 7))
+    names(bcfivMat) <- c("node", "CCACE", "pvalue", "Weak_IV_test", "Pi_obs", "ITT", "Pi_compliers")
+
+    # Generate Leaves Indicator
+    lvs <- leaves <- numeric(length(rules))
+    lvs[unique(fit.tree$where)] <- 1
+    leaves[rules[lvs == 1]] <- 1
+
+    # Run an IV Regression on each Node
+    iv.root <- AER::ivreg(Y ~ W | Z,
+      data = inference
+    )
+    summary <- summary(iv.root, diagnostics = TRUE)
+    iv.effect.root <- summary$coef[2, 1]
+    p.value.root <- summary$coef[2, 4]
+    p.value.weak.iv.root <- summary$diagnostics[1, 4]
+    proportion.root <- 1
+    compliers.root <- length(which(inference$Z == inference$W)) / nrow(inference)
+    itt.root <- iv.effect.root * compliers.root
+
+    # Store Results for Root
+    bcfivMat[1, ] <- c(NA, round(iv.effect.root, 4), round(p.value.root, 4), round(p.value.weak.iv.root, 4), round(proportion.root, 4), round(itt.root, 4), round(compliers.root, 4))
+
+    # Initialize New Data
+    names(inference) <- paste(names(inference), sep = "")
+
+    # Run a loop to get the rules (sub-populations)
+    for (i in rules[-1]) {
+      # Create a Vector to Store all the Dimensions of a Rule
+      sub <- as.data.frame(matrix(NA,
+        nrow = 1,
+        ncol = nrow(as.data.frame(path.rpart(fit.tree, node = i, print.it = FALSE))) - 1
+      ))
+      quiet(capture.output(for (j in 1:ncol(sub)) {
+        # Store each Rule as a Sub-population
+        sub[, j] <- as.character(print(as.data.frame(path.rpart(fit.tree, node = i, print.it = FALSE))[j + 1, 1]))
+        sub_pop <- noquote(paste(sub, collapse = " & "))
+      }))
+
+      subset <- with(inference, inference[which(eval(parse(text = sub_pop))), ])
+
+      # Run the IV Regression
+      if (length(unique(subset$W)) != 1 | length(unique(subset$Z)) != 1) {
+        iv.reg <- AER::ivreg(Y ~ W | Z,
+          data = subset
+        )
+        summary <- summary(iv.reg, diagnostics = TRUE)
+        iv.effect <- summary$coef[2, 1]
+        p.value <- summary$coef[2, 4]
+        p.value.weak.iv <- summary$diagnostics[1, 4]
+        compliers <- length(which(subset$Z == subset$W)) / nrow(subset)
+        itt <- iv.effect * compliers
+
+        # Proportion of observations in the node
+        proportion.node <- nrow(subset) / nrow(inference)
+        bcfivMat[i, ] <- c(sub_pop, round(iv.effect, 4), round(p.value, 4), round(p.value.weak.iv, 4), round(proportion.node, 4), round(itt, 4), round(compliers, 4))
+      }
+
+      # Delete data
+      rm(subset)
+    }
+
+    # Adjust P.values
+    bcfiv_correction <- cbind(as.data.frame(bcfivMat), leaves)
+    adj <- round(p.adjust(as.numeric(bcfiv_correction$pvalue[which(bcfiv_correction$leaves == 1)]), paste(adj_method)), 5)
+    Adj_pvalue <- rep(NA, length(rules))
+    Adj_pvalue[which(bcfiv_correction$leaves == 1)] <- adj
     # Store Results
     bcfivResults <- cbind(as.data.frame(bcfivMat), Adj_pvalue)
   }
   # Return Results
-  return(list(results = bcfivResults, discovery = discovery, inference = inference,pic=pic))
-  
+  return(list(results = bcfivResults, discovery = discovery, inference = inference, pic = pic))
 }
 GRF_IV <- function(Y, W, Z, X) {
   p.score <- glm(Z ~ ., family = binomial, data = X)
@@ -466,16 +495,16 @@ GRF_IV <- function(Y, W, Z, X) {
     X = X[valid_idx, ],
     pihat = pihat[valid_idx]
   )
-  
-  set.seed(42)  # For reproducibility
-  
+
+  set.seed(42) # For reproducibility
+
   # Number of valid observations
   n_valid <- length(subset_data$Y)
-  
-  # Create random indices for training 
-  discovery_id <- sample(n_valid, size = floor(0.5 * n_valid))  # 50% for training
-  inference_id <- setdiff(1:n_valid, discovery_id)  #  50% for validation
-  
+
+  # Create random indices for training
+  discovery_id <- sample(n_valid, size = floor(0.5 * n_valid)) # 50% for training
+  inference_id <- setdiff(1:n_valid, discovery_id) #  50% for validation
+
   # Create train/validation splits
   discovery <- list(
     Y = subset_data$Y[discovery_id],
@@ -484,7 +513,7 @@ GRF_IV <- function(Y, W, Z, X) {
     X = subset_data$X[discovery_id, ],
     pihat = subset_data$pihat[discovery_id]
   )
-  
+
   inference <- list(
     Y = subset_data$Y[inference_id],
     W = subset_data$W[inference_id],
@@ -496,115 +525,130 @@ GRF_IV <- function(Y, W, Z, X) {
     Y = inference$Y,
     W = inference$W,
     Z = inference$Z,
-    inference$X,  # This expands the columns of X
+    inference$X, # This expands the columns of X
     pihat = inference$pihat
   )
 
-  iv_forest <- grf::instrumental_forest(X=as.data.frame(discovery$X), Y=discovery$Y, W=discovery$W, Z=discovery$Z, num.trees = 2000, min.node.size=20)
+  iv_forest <- grf::instrumental_forest(X = as.data.frame(discovery$X), Y = discovery$Y, W = discovery$W, Z = discovery$Z, num.trees = 2000, min.node.size = 20)
   tauhat <- predict(iv_forest)$predictions
- 
+
   exp <- as.data.frame(cbind(tauhat, as.data.frame(discovery$X)))
   fit.tree <- rpart(tauhat ~ .,
-                    data = exp,
-                    maxdepth = 2,
-                    cp=0.001)
+    data = exp,
+    maxdepth = 2,
+    cp = 0.001
+  )
   rules <- as.numeric(row.names(fit.tree$frame[fit.tree$numresp]))
-  
+
   # Initialize Outputs
   ivMat <- as.data.frame(matrix(NA, nrow = length(rules), ncol = 10))
-  names(ivMat) <- c("node", "CCACE", "pvalue", "Weak_IV_test",
-                    "Pi_obs", "ITT", "Pi_compliers",
-                    "SE", "CI_lower", "CI_upper")
-  lvs <- leaves <- numeric(length(rules)) 
+  names(ivMat) <- c(
+    "node", "CCACE", "pvalue", "Weak_IV_test",
+    "Pi_obs", "ITT", "Pi_compliers",
+    "SE", "CI_lower", "CI_upper"
+  )
+  lvs <- leaves <- numeric(length(rules))
   lvs[unique(fit.tree$where)] <- 1
-  leaves[rules[lvs==1]] <- 1
+  leaves[rules[lvs == 1]] <- 1
   # Run an IV Regression on the Root
-  iv.root <- AER::ivreg(Y ~ W | Z,  
-                        data = inference)
+  iv.root <- AER::ivreg(Y ~ W | Z,
+    data = inference
+  )
   summary <- summary(iv.root, diagnostics = TRUE)
-  iv.effect.root <-  summary$coef[2,1]
-  p.value.root <- summary$coef[2,4]
-  p.value.weak.iv.root <- summary$diagnostics[1,4]
+  iv.effect.root <- summary$coef[2, 1]
+  p.value.root <- summary$coef[2, 4]
+  p.value.weak.iv.root <- summary$diagnostics[1, 4]
   proportion.root <- 1
-  compliers.root <- length(which(inference$Z==inference$W))/nrow(inference$X)
-  itt.root <- iv.effect.root*compliers.root
-  
-  se_ccace.root <- summary$coef[2,2]   # Standard error at root
-  
+  compliers.root <- length(which(inference$Z == inference$W)) / nrow(inference$X)
+  itt.root <- iv.effect.root * compliers.root
+
+  se_ccace.root <- summary$coef[2, 2] # Standard error at root
+
   # Compute 95% Confidence Interval
   ci_lower_root <- iv.effect.root - 1.96 * se_ccace.root
   ci_upper_root <- iv.effect.root + 1.96 * se_ccace.root
-  
-  ivMat[1,] <- c(NA, round(iv.effect.root, 4),
-                 round(p.value.root, 4),
-                 round(p.value.weak.iv.root, 4),
-                 round(proportion.root, 4),
-                 round(itt.root, 4),
-                 round(compliers.root, 4),
-                 round(se_ccace.root, 4),
-                 round(ci_lower_root, 4),
-                 round(ci_upper_root, 4))
-  names(inference) <- paste(names(inference), sep="")
-  
+
+  ivMat[1, ] <- c(
+    NA, round(iv.effect.root, 4),
+    round(p.value.root, 4),
+    round(p.value.weak.iv.root, 4),
+    round(proportion.root, 4),
+    round(itt.root, 4),
+    round(compliers.root, 4),
+    round(se_ccace.root, 4),
+    round(ci_lower_root, 4),
+    round(ci_upper_root, 4)
+  )
+  names(inference) <- paste(names(inference), sep = "")
+
   # Run a loop to get the rules (sub-populations)
   for (i in rules[-1]) {
-    sub <- as.data.frame(matrix(NA, nrow = 1,
-                                ncol = nrow(as.data.frame(path.rpart(fit.tree, node = i, print.it = FALSE))) - 1))
+    sub <- as.data.frame(matrix(NA,
+      nrow = 1,
+      ncol = nrow(as.data.frame(path.rpart(fit.tree, node = i, print.it = FALSE))) - 1
+    ))
     quiet(capture.output(for (j in 1:ncol(sub)) {
       sub[, j] <- as.character(print(as.data.frame(path.rpart(fit.tree, node = i, print.it = FALSE))[j + 1, 1]))
       sub_pop <- noquote(paste(sub, collapse = " & "))
     }))
-    
+
     subset <- with(inference_combined, inference_combined[which(eval(parse(text = sub_pop))), ])
-    
+
     if (nrow(subset) > 3 &&
-        length(unique(subset$W)) > 1 &&
-        length(unique(subset$Z)) > 1 &&
-        all(!is.na(subset$Y)) && all(!is.na(subset$W)) && all(!is.na(subset$Z))) {
-      
+      length(unique(subset$W)) > 1 &&
+      length(unique(subset$Z)) > 1 &&
+      all(!is.na(subset$Y)) && all(!is.na(subset$W)) && all(!is.na(subset$Z))) {
       X_model <- tryCatch(model.matrix(~ W | Z, data = subset), error = function(e) return(NULL))
       if (is.null(X_model) || qr(X_model)$rank < ncol(X_model)) {
         message("Skipping node: ", sub_pop, " due to rank-deficient model matrix.")
         next
       }
-      
-      iv.reg <- tryCatch({
-        AER::ivreg(Y ~ W | Z, data = subset)
-      }, error = function(e) {
-        message("IV regression failed for node: ", sub_pop, " - Skipping...")
-        return(NULL)
-      })
-      
-      if (!is.null(iv.reg)) {
-        summary <- tryCatch({
-          summary(iv.reg, diagnostics = TRUE)
-        }, error = function(e) {
-          message("Summary failed for node: ", sub_pop, " - Skipping...")
+
+      iv.reg <- tryCatch(
+        {
+          AER::ivreg(Y ~ W | Z, data = subset)
+        },
+        error = function(e) {
+          message("IV regression failed for node: ", sub_pop, " - Skipping...")
           return(NULL)
-        })
-        
+        }
+      )
+
+      if (!is.null(iv.reg)) {
+        summary <- tryCatch(
+          {
+            summary(iv.reg, diagnostics = TRUE)
+          },
+          error = function(e) {
+            message("Summary failed for node: ", sub_pop, " - Skipping...")
+            return(NULL)
+          }
+        )
+
         if (!is.null(summary) && summary$df[2] > 0) {
           iv.effect <- summary$coef[2, 1]
           se_ccace <- summary$coef[2, 2]
           ci_lower <- iv.effect - 1.96 * se_ccace
           ci_upper <- iv.effect + 1.96 * se_ccace
-          
+
           p.value <- summary$coef[2, 4]
           p.value.weak.iv <- summary$diagnostics[1, 4]
           compliers <- length(which(subset$Z == subset$W)) / nrow(subset)
           itt <- iv.effect * compliers
           proportion.node <- nrow(subset) / nrow(inference$X)
-          
-          ivMat[i, ] <- c(sub_pop,
-                          round(iv.effect, 4),
-                          round(p.value, 4),
-                          round(p.value.weak.iv, 4),
-                          round(proportion.node, 4),
-                          round(itt, 4),
-                          round(compliers, 4),
-                          round(se_ccace, 4),
-                          round(ci_lower, 4),
-                          round(ci_upper, 4))
+
+          ivMat[i, ] <- c(
+            sub_pop,
+            round(iv.effect, 4),
+            round(p.value, 4),
+            round(p.value.weak.iv, 4),
+            round(proportion.node, 4),
+            round(itt, 4),
+            round(compliers, 4),
+            round(se_ccace, 4),
+            round(ci_lower, 4),
+            round(ci_upper, 4)
+          )
         } else {
           message("Skipping node: ", sub_pop, " due to zero residual degrees of freedom.")
         }
@@ -612,206 +656,1000 @@ GRF_IV <- function(Y, W, Z, X) {
     } else {
       message("Skipping node: ", sub_pop, " due to missing values, small sample size, or lack of variation.")
     }
-  }    
-  
-  # Adjust P.values 
+  }
+
+  # Adjust P.values
   iv_correction <- cbind(as.data.frame(ivMat), leaves)
-  adj <- round(p.adjust( as.numeric(iv_correction$pvalue[which(iv_correction$leaves==1)]) ,  paste(adj_method)), 5)
-  Adj_pvalue <- rep(NA, length(rules)) 
-  Adj_pvalue[which(iv_correction$leaves==1)] <- adj
+  adj <- round(p.adjust(as.numeric(iv_correction$pvalue[which(iv_correction$leaves == 1)]), paste(adj_method)), 5)
+  Adj_pvalue <- rep(NA, length(rules))
+  Adj_pvalue[which(iv_correction$leaves == 1)] <- adj
   ivResults <- cbind(as.data.frame(ivMat), Adj_pvalue)
   # Return Results
   return(list(results = ivResults, discovery = discovery, inference = inference))
-  
 }
+
+# functions application (with different tuning parameter)
+
+GRF_IV_app <- function(Y, W, Z, X) {
+  # Fit a logistic regression model to estimate propensity scores
+  p.score <- glm(Z ~ ., family = binomial, data = X)
+  pihat <- predict(p.score, type = "response")
+  # Identify indices for which propensity scores are within [0.1, 0.9]
+  valid_idx <- which(pihat > 0.1 & pihat < 0.9)
+  # valid_idx <- which(pihat > 0 & pihat < 1)
+
+  # Create a subset of the data based on valid indices
+  subset_data <- list(
+    Y = Y[valid_idx],
+    W = W[valid_idx],
+    Z = Z[valid_idx],
+    X = X[valid_idx, ],
+    pihat = pihat[valid_idx]
+  )
+  set.seed(42)
+
+  # Number of valid observations
+  n_valid <- length(subset_data$Y)
+
+  # Create random indices for training
+  discovery_id <- sample(n_valid, size = floor(0.5 * n_valid)) # 50% for training
+  inference_id <- setdiff(1:n_valid, discovery_id) #  50% for validation
+
+  # Create train/validation splits
+  discovery <- list(
+    Y = subset_data$Y[discovery_id],
+    W = subset_data$W[discovery_id],
+    Z = subset_data$Z[discovery_id],
+    X = subset_data$X[discovery_id, ],
+    pihat = subset_data$pihat[discovery_id]
+  )
+
+  inference <- list(
+    Y = subset_data$Y[inference_id],
+    W = subset_data$W[inference_id],
+    Z = subset_data$Z[inference_id],
+    X = subset_data$X[inference_id, ],
+    pihat = subset_data$pihat[inference_id]
+  )
+  inference_combined <- data.frame(
+    Y = inference$Y,
+    W = inference$W,
+    Z = inference$Z,
+    inference$X, # This expands the columns of X
+    pihat = inference$pihat
+  )
+  iv_forest <- grf::instrumental_forest(X = as.data.frame(discovery$X), Y = discovery$Y, W = discovery$W, Z = discovery$Z, num.trees = 2000, min.node.size = 20)
+
+  tauhat <- predict(iv_forest)$predictions
+  exp <- as.data.frame(cbind(tauhat, as.data.frame(discovery$X)))
+  fit.tree <- rpart(tauhat ~ .,
+    data = exp,
+    minbucket = 65,
+    cp = 0.001,
+    maxdepth = 5
+  )
+
+  rules <- as.numeric(row.names(fit.tree$frame[fit.tree$numresp]))
+  # Initialize Outputs
+  ivMat <- as.data.frame(matrix(NA, nrow = length(rules), ncol = 10))
+  names(ivMat) <- c(
+    "node", "CCACE", "pvalue", "Weak_IV_test",
+    "Pi_obs", "ITT", "Pi_compliers",
+    "SE", "CI_lower", "CI_upper"
+  )
+  lvs <- leaves <- numeric(length(rules))
+  lvs[unique(fit.tree$where)] <- 1
+  leaves[rules[lvs == 1]] <- 1
+
+  # Run an IV Regression on the Root
+  iv.root <- AER::ivreg(Y ~ W | Z,
+    data = inference
+  )
+  summary <- summary(iv.root, diagnostics = TRUE)
+  iv.effect.root <- summary$coef[2, 1]
+  p.value.root <- summary$coef[2, 4]
+  p.value.weak.iv.root <- summary$diagnostics[1, 4]
+  proportion.root <- 1
+  compliers.root <- with(inference, mean(W[Z == 1]) - mean(W[Z == 0]))
+  itt.root <- iv.effect.root * compliers.root
+
+  se_ccace.root <- summary$coef[2, 2] # Standard error at root
+
+  # Compute 95% Confidence Interval
+  ci_lower_root <- iv.effect.root - 1.96 * se_ccace.root
+  ci_upper_root <- iv.effect.root + 1.96 * se_ccace.root
+
+
+  # Store Results for Root
+  ivMat[1, ] <- c(
+    NA, round(iv.effect.root, 4),
+    round(p.value.root, 4),
+    round(p.value.weak.iv.root, 4),
+    round(proportion.root, 4),
+    round(itt.root, 4),
+    round(compliers.root, 4),
+    round(se_ccace.root, 4),
+    round(ci_lower_root, 4),
+    round(ci_upper_root, 4)
+  )
+  names(inference) <- paste(names(inference), sep = "")
+
+  # Run a loop to get the rules (sub-populations)
+  for (i in rules[-1]) {
+    sub <- as.data.frame(matrix(NA,
+      nrow = 1,
+      ncol = nrow(as.data.frame(path.rpart(fit.tree, node = i, print.it = FALSE))) - 1
+    ))
+    quiet(capture.output(for (j in 1:ncol(sub)) {
+      sub[, j] <- as.character(print(as.data.frame(path.rpart(fit.tree, node = i, print.it = FALSE))[j + 1, 1]))
+      sub_pop <- noquote(paste(sub, collapse = " & "))
+    }))
+
+    subset <- with(inference_combined, inference_combined[which(eval(parse(text = sub_pop))), ])
+
+    if (nrow(subset) > 3 &&
+      length(unique(subset$W)) > 1 &&
+      length(unique(subset$Z)) > 1 &&
+      all(!is.na(subset$Y)) && all(!is.na(subset$W)) && all(!is.na(subset$Z))) {
+      X_model <- tryCatch(model.matrix(~ W | Z, data = subset), error = function(e) return(NULL))
+      if (is.null(X_model) || qr(X_model)$rank < ncol(X_model)) {
+        message("Skipping node: ", sub_pop, " due to rank-deficient model matrix.")
+        next
+      }
+
+      iv.reg <- tryCatch(
+        {
+          AER::ivreg(Y ~ W | Z, data = subset)
+        },
+        error = function(e) {
+          message("IV regression failed for node: ", sub_pop, " - Skipping...")
+          return(NULL)
+        }
+      )
+
+      if (!is.null(iv.reg)) {
+        summary <- tryCatch(
+          {
+            summary(iv.reg, diagnostics = TRUE)
+          },
+          error = function(e) {
+            message("Summary failed for node: ", sub_pop, " - Skipping...")
+            return(NULL)
+          }
+        )
+
+        if (!is.null(summary) && summary$df[2] > 0) {
+          iv.effect <- summary$coef[2, 1]
+          se_ccace <- summary$coef[2, 2]
+          ci_lower <- iv.effect - 1.96 * se_ccace
+          ci_upper <- iv.effect + 1.96 * se_ccace
+
+          p.value <- summary$coef[2, 4]
+          p.value.weak.iv <- summary$diagnostics[1, 4]
+          compliers <- with(inference, mean(W[Z == 1]) - mean(W[Z == 0]))
+          itt <- iv.effect * compliers
+          proportion.node <- nrow(subset) / nrow(inference$X)
+
+          ivMat[i, ] <- c(
+            sub_pop,
+            round(iv.effect, 4),
+            round(p.value, 4),
+            round(p.value.weak.iv, 4),
+            round(proportion.node, 4),
+            round(itt, 4),
+            round(compliers, 4),
+            round(se_ccace, 4),
+            round(ci_lower, 4),
+            round(ci_upper, 4)
+          )
+        } else {
+          message("Skipping node: ", sub_pop, " due to zero residual degrees of freedom.")
+        }
+      }
+    } else {
+      message("Skipping node: ", sub_pop, " due to missing values, small sample size, or lack of variation.")
+    }
+    # Delete data
+    rm(subset)
+  }
+  # 1. Keep only valid rows (non-NA effect estimates)
+  ivMat_clean <- ivMat[!is.na(ivMat$CCACE), ]
+
+  # 2. Get correct indices for the corresponding leaf flags
+  valid_row_indices <- as.numeric(rownames(ivMat_clean))
+  leaves_clean <- leaves[valid_row_indices]
+
+  # 3. Combine cleaned results with leaf info
+  iv_correction <- cbind(ivMat_clean, leaf = leaves_clean)
+
+  # 4. Adjust p-values for actual leaves
+  leaf_indices <- which(iv_correction$leaf == 1)
+  pvals_to_adjust <- as.numeric(iv_correction$pvalue[leaf_indices])
+
+  # Safe adjustment
+  if (length(pvals_to_adjust) > 0) {
+    adj_p <- round(p.adjust(pvals_to_adjust, method = adj_method), 5)
+    Adj_pvalue <- rep(NA, nrow(iv_correction))
+    Adj_pvalue[leaf_indices] <- adj_p
+  } else {
+    Adj_pvalue <- rep(NA, nrow(iv_correction))
+    message("No leaf p-values to adjust.")
+  }
+
+  # Final results
+  ivResults <- cbind(iv_correction, Adj_pvalue)
+  # Return Results
+  return(list(results = ivResults, discovery = discovery, inference = inference))
+}
+BCF_IV_app <- function(Y, W, Z, X, binary = FALSE) {
+  # Initialize total dataset
+  iv.data <- as.data.frame(cbind(Y, W, Z, X))
+  names(iv.data)[1:3] <- c("Y", "W", "Z")
+  iv.data <- iv.data %>%
+    mutate(across(everything(), as.numeric))
+  x_vars <- setdiff(names(iv.data), c("Y", "W", "Z"))
+  p.score <- glm(
+    Z ~ .,
+    family = binomial,
+    data = data.frame(Z = iv.data$Z, iv.data[, x_vars])
+  )
+  pihat_all <- predict(p.score, type = "response")
+  valid_idx <- which(pihat_all > 0.1 & pihat_all < 0.9)
+  iv.data <- iv.data[valid_idx, ]
+  pihat_all <- pihat_all[valid_idx]
+  set.seed(42)
+  index <- sample(nrow(iv.data), nrow(iv.data) * 0.5, replace = FALSE)
+
+  discovery <- iv.data[index, ]
+  inference <- iv.data[-index, ]
+  discovery_X <- discovery[, x_vars]
+  pihat <- pihat_all[index]
+
+  # Perform the Bayesian Causal Forest for the Proportion of Compliers (pic)
+  pic_bcf <- quiet(bartCause::bartc(discovery$W, discovery$Z, discovery_X, n.samples = 500, n.burn = 500, n.chains = 2L))
+  tau_pic <- bartCause::extract(pic_bcf, type = "ite")
+  pic <- apply(tau_pic, 2, mean)
+  #################
+  if (binary == FALSE) {
+    bcf_fit <- SparseBCF::SparseBCF(
+      y = discovery$Y,
+      z = as.numeric(discovery$Z),
+      x_control = as.matrix(discovery_X),
+      x_moderate = as.matrix(discovery_X),
+      pihat = pihat,
+      sparse = FALSE, # <<< THIS IS THE KEY
+      nburn = 500,
+      nsim = 500,
+      save_trees_mu_dir = NULL,
+      save_trees_tau_dir = NULL,
+      OOB = FALSE
+    )
+
+    # Compute Posterior
+    tau_post <- bcf_fit$tau
+    tauhat <- colMeans(tau_post)
+    exp <- as.data.frame(cbind(tauhat, discovery_X))
+    fit.tree <- rpart(tauhat ~ .,
+      data = exp,
+      minbucket = 65,
+      cp = 0.001,
+      maxdepth = 5
+    )
+
+    rules <- as.numeric(row.names(fit.tree$frame[fit.tree$numresp]))
+
+    bcfivMat <- as.data.frame(matrix(NA, nrow = length(rules), ncol = 10))
+    names(bcfivMat) <- c(
+      "node", "CCACE", "pvalue", "Weak_IV_test",
+      "Pi_obs", "ITT", "Pi_compliers",
+      "SE", "CI_lower", "CI_upper"
+    )
+    # Generate Leaves Indicator
+    lvs <- leaves <- numeric(length(rules))
+    lvs[unique(fit.tree$where)] <- 1
+    leaves[rules[lvs == 1]] <- 1
+
+    # Run an IV Regression on the Root
+    iv.root <- AER::ivreg(Y ~ W | Z,
+      data = inference
+    )
+    summary <- summary(iv.root, diagnostics = TRUE)
+    iv.effect.root <- summary$coef[2, 1]
+    p.value.root <- summary$coef[2, 4]
+    p.value.weak.iv.root <- summary$diagnostics[1, 4]
+    proportion.root <- 1
+    compliers.root <- length(which(inference$Z == inference$W)) / nrow(inference)
+    itt.root <- iv.effect.root * compliers.root
+    se_ccace.root <- summary$coef[2, 2] # Standard error at root
+
+    # Compute 95% Confidence Interval
+    ci_lower_root <- iv.effect.root - 1.96 * se_ccace.root
+    ci_upper_root <- iv.effect.root + 1.96 * se_ccace.root
+
+    # Initialize New Data
+    # names(inference) <- paste(names(inference), sep="")
+    bcfivMat[1, ] <- c(
+      NA, round(iv.effect.root, 4),
+      round(p.value.root, 4),
+      round(p.value.weak.iv.root, 4),
+      round(proportion.root, 4),
+      round(itt.root, 4),
+      round(compliers.root, 4),
+      round(se_ccace.root, 4),
+      round(ci_lower_root, 4),
+      round(ci_upper_root, 4)
+    )
+    names(inference) <- paste(names(inference), sep = "")
+    # Run a loop to get the rules (sub-populations)
+
+    for (i in rules[-1]) {
+      # Create a Vector to Store all the Dimensions of a Rule
+      sub <- as.data.frame(matrix(NA,
+        nrow = 1,
+        ncol = nrow(as.data.frame(path.rpart(fit.tree, node = i, print.it = FALSE))) - 1
+      ))
+      quiet(capture.output(for (j in 1:ncol(sub)) {
+        sub[, j] <- as.character(print(as.data.frame(path.rpart(fit.tree, node = i, print.it = FALSE))[j + 1, 1]))
+        sub_pop <- noquote(paste(sub, collapse = " & "))
+      }))
+
+      subset <- with(inference, inference[which(eval(parse(text = sub_pop))), ])
+
+      # Check for enough data and variation
+      if (nrow(subset) >= 10 &&
+        length(unique(subset$W)) > 1 &&
+        length(unique(subset$Z)) > 1 &&
+        length(unique(subset$Y)) > 1) {
+        iv.reg <- tryCatch(ivreg(Y ~ W | Z, data = subset),
+          error = function(e) NULL
+        )
+
+        if (!is.null(iv.reg)) {
+          summary <- tryCatch(summary(iv.reg, diagnostics = TRUE),
+            error = function(e) NULL
+          )
+
+          if (!is.null(summary)) {
+            iv.effect <- summary$coef[2, 1]
+            se_ccace <- summary$coef[2, 2]
+            ci_lower <- iv.effect - 1.96 * se_ccace
+            ci_upper <- iv.effect + 1.96 * se_ccace
+
+            p.value <- summary$coef[2, 4]
+            p.value.weak.iv <- summary$diagnostics[1, 4]
+            compliers <- length(which(subset$Z == subset$W)) / nrow(subset)
+            itt <- iv.effect * compliers
+            proportion.node <- nrow(subset) / nrow(inference)
+
+            bcfivMat[i, ] <- c(
+              sub_pop,
+              round(iv.effect, 4),
+              round(p.value, 4),
+              round(p.value.weak.iv, 4),
+              round(proportion.node, 4),
+              round(itt, 4),
+              round(compliers, 4),
+              round(se_ccace, 4),
+              round(ci_lower, 4),
+              round(ci_upper, 4)
+            )
+          } else {
+            cat("Skipped node due to invalid IV summary:", sub_pop, "\n")
+          }
+        } else {
+          cat("IV regression failed for node:", sub_pop, "\n")
+        }
+      } else {
+        cat("Skipped node due to insufficient data or variation:", sub_pop, "\n")
+      }
+
+      rm(subset)
+    }
+    bcfivMat_clean <- bcfivMat[!is.na(bcfivMat$CCACE), ]
+    valid_row_indices <- as.numeric(rownames(bcfivMat_clean))
+    leaves_clean <- leaves[valid_row_indices]
+    iv_correction <- cbind(bcfivMat_clean, leaf = leaves_clean)
+    leaf_indices <- which(iv_correction$leaf == 1)
+    pvals_to_adjust <- as.numeric(iv_correction$pvalue[leaf_indices])
+
+    # Safe adjustment
+    if (length(pvals_to_adjust) > 0) {
+      adj_p <- round(p.adjust(pvals_to_adjust, method = adj_method), 5)
+      Adj_pvalue <- rep(NA, nrow(iv_correction))
+      Adj_pvalue[leaf_indices] <- adj_p
+    } else {
+      Adj_pvalue <- rep(NA, nrow(iv_correction))
+      message("No leaf p-values to adjust.")
+    }
+    bcfivResults <- cbind(iv_correction, Adj_pvalue)
+    bcfivResults$node_id <- as.numeric(rownames(bcfivResults))
+  }
+
+  # Binary Outcomes
+
+  if (binary == TRUE) {
+    # Perform the binary Bayesian Causal Forest for the ITT
+    fit_itt <- quiet(bartCause::bartc(discovery$Y, as.numeric(discovery$Z), as.matrix(discovery_X), n.samples = 500, n.burn = 500, n.chains = 2L))
+
+    # Get posterior of treatment effects
+    ites <- bartCause::extract(fit_itt, type = "ite")
+    itt <- apply(ites, 2, mean)
+
+    # Get posterior of treatment effects
+    eps <- 0.001
+    keep <- is.finite(itt) & is.finite(pic) & pic > eps
+    tauhat_clean <- itt[keep] / pic[keep]
+    exp <- data.frame(tauhat = tauhat_clean, discovery_X[keep, , drop = FALSE])
+
+    fit.tree <- rpart(tauhat ~ .,
+      data = exp,
+      maxdepth = 5,
+      minbucket = 65,
+      cp = 0.001
+    )
+
+    rules <- as.numeric(row.names(fit.tree$frame[fit.tree$numresp]))
+    bcfivMat <- as.data.frame(matrix(NA, nrow = length(rules), ncol = 10))
+    names(bcfivMat) <- c(
+      "node", "CCACE", "pvalue", "Weak_IV_test",
+      "Pi_obs", "ITT", "Pi_compliers",
+      "SE", "CI_lower", "CI_upper"
+    )
+    # Generate Leaves Indicator
+    lvs <- leaves <- numeric(length(rules))
+    lvs[unique(fit.tree$where)] <- 1
+    leaves[rules[lvs == 1]] <- 1
+
+    # Run an IV Regression on the Root
+    iv.root <- AER::ivreg(Y ~ W | Z,
+      data = inference
+    )
+    summary <- summary(iv.root, diagnostics = TRUE)
+    iv.effect.root <- summary$coef[2, 1]
+    p.value.root <- summary$coef[2, 4]
+    p.value.weak.iv.root <- summary$diagnostics[1, 4]
+    proportion.root <- 1
+    compliers.root <- with(inference, mean(W[Z == 1]) - mean(W[Z == 0]))
+    itt.root <- iv.effect.root * compliers.root
+    se_ccace.root <- summary$coef[2, 2] # Standard error at root
+
+    # Compute 95% Confidence Interval
+    ci_lower_root <- iv.effect.root - 1.96 * se_ccace.root
+    ci_upper_root <- iv.effect.root + 1.96 * se_ccace.root
+
+    # Initialize New Data
+    # names(inference) <- paste(names(inference), sep="")
+    bcfivMat[1, ] <- c(
+      NA, round(iv.effect.root, 4),
+      round(p.value.root, 4),
+      round(p.value.weak.iv.root, 4),
+      round(proportion.root, 4),
+      round(itt.root, 4),
+      round(compliers.root, 4),
+      round(se_ccace.root, 4),
+      round(ci_lower_root, 4),
+      round(ci_upper_root, 4)
+    )
+    names(inference) <- paste(names(inference), sep = "")
+    # Run a loop to get the rules (sub-populations)
+
+    for (i in rules[-1]) {
+      # Create a Vector to Store all the Dimensions of a Rule
+      sub <- as.data.frame(matrix(NA,
+        nrow = 1,
+        ncol = nrow(as.data.frame(path.rpart(fit.tree, node = i, print.it = FALSE))) - 1
+      ))
+      quiet(capture.output(for (j in 1:ncol(sub)) {
+        sub[, j] <- as.character(print(as.data.frame(path.rpart(fit.tree, node = i, print.it = FALSE))[j + 1, 1]))
+        sub_pop <- noquote(paste(sub, collapse = " & "))
+      }))
+
+      subset <- with(inference, inference[which(eval(parse(text = sub_pop))), ])
+
+      # Check for enough data and variation
+      if (nrow(subset) >= 10 &&
+        length(unique(subset$W)) > 1 &&
+        length(unique(subset$Z)) > 1 &&
+        length(unique(subset$Y)) > 1) {
+        iv.reg <- tryCatch(ivreg(Y ~ W | Z, data = subset),
+          error = function(e) NULL
+        )
+
+        if (!is.null(iv.reg)) {
+          summary <- tryCatch(summary(iv.reg, diagnostics = TRUE),
+            error = function(e) NULL
+          )
+
+          if (!is.null(summary)) {
+            iv.effect <- summary$coef[2, 1]
+            se_ccace <- summary$coef[2, 2]
+            ci_lower <- iv.effect - 1.96 * se_ccace
+            ci_upper <- iv.effect + 1.96 * se_ccace
+
+            p.value <- summary$coef[2, 4]
+            p.value.weak.iv <- summary$diagnostics[1, 4]
+            compliers <- with(subset, mean(W[Z == 1]) - mean(W[Z == 0]))
+            itt <- iv.effect * compliers
+            proportion.node <- nrow(subset) / nrow(inference)
+
+            bcfivMat[i, ] <- c(
+              sub_pop,
+              round(iv.effect, 4),
+              round(p.value, 4),
+              round(p.value.weak.iv, 4),
+              round(proportion.node, 4),
+              round(itt, 4),
+              round(compliers, 4),
+              round(se_ccace, 4),
+              round(ci_lower, 4),
+              round(ci_upper, 4)
+            )
+          } else {
+            cat("Skipped node due to invalid IV summary:", sub_pop, "\n")
+          }
+        } else {
+          cat("IV regression failed for node:", sub_pop, "\n")
+        }
+      } else {
+        cat("Skipped node due to insufficient data or variation:", sub_pop, "\n")
+      }
+
+      rm(subset)
+    }
+    bcfivMat_clean <- bcfivMat[!is.na(bcfivMat$CCACE), ]
+    valid_row_indices <- as.numeric(rownames(bcfivMat_clean))
+    leaves_clean <- leaves[valid_row_indices]
+    iv_correction <- cbind(bcfivMat_clean, leaf = leaves_clean)
+    leaf_indices <- which(iv_correction$leaf == 1)
+    pvals_to_adjust <- as.numeric(iv_correction$pvalue[leaf_indices])
+    # Safe adjustment
+    if (length(pvals_to_adjust) > 0) {
+      adj_p <- round(p.adjust(pvals_to_adjust, method = adj_method), 5)
+      Adj_pvalue <- rep(NA, nrow(iv_correction))
+      Adj_pvalue[leaf_indices] <- adj_p
+    } else {
+      Adj_pvalue <- rep(NA, nrow(iv_correction))
+      message("No leaf p-values to adjust.")
+    }
+    # # Store Results
+    bcfivResults <- cbind(iv_correction, Adj_pvalue)
+    bcfivResults$node_id <- as.numeric(rownames(bcfivResults))
+  }
+
+  # Return Results
+  return(list(results = bcfivResults, discovery = discovery, inference = inference, pic = pic))
+}
+DRRF_IV_app <- function(Y, W, Z, X) {
+  # Fit a logistic regression model to estimate propensity scores
+  p.score <- glm(Z ~ ., family = binomial, data = X)
+  pihat <- predict(p.score, type = "response")
+  # Identify indices for which propensity scores are within [0.1, 0.9]
+  valid_idx <- which(pihat > 0.1 & pihat < 0.9)
+
+  # Create a subset of the data based on valid indices
+  subset_data <- list(
+    Y = Y[valid_idx],
+    W = W[valid_idx],
+    Z = Z[valid_idx],
+    X = X[valid_idx, ],
+    pihat = pihat[valid_idx]
+  )
+
+  set.seed(42) # For reproducibility
+
+  # Number of valid observations
+  n_valid <- length(subset_data$Y)
+
+  # Create random indices for training
+  discovery_id <- sample(n_valid, size = floor(0.5 * n_valid)) # 50% for training
+  inference_id <- setdiff(1:n_valid, discovery_id) #  50% for validation
+
+  # Create train/validation splits
+  discovery <- list(
+    Y = subset_data$Y[discovery_id],
+    W = subset_data$W[discovery_id],
+    Z = subset_data$Z[discovery_id],
+    X = subset_data$X[discovery_id, ],
+    pihat = subset_data$pihat[discovery_id]
+  )
+
+  inference <- list(
+    Y = subset_data$Y[inference_id],
+    W = subset_data$W[inference_id],
+    Z = subset_data$Z[inference_id],
+    X = subset_data$X[inference_id, ],
+    pihat = subset_data$pihat[inference_id]
+  )
+  inference_combined <- data.frame(
+    Y = inference$Y,
+    W = inference$W,
+    Z = inference$Z,
+    inference$X, # This expands the columns of X
+    pihat = inference$pihat
+  )
+
+  m_model <- randomForest::randomForest(x = as.data.frame(discovery$X), y = as.factor(discovery$Y))
+
+  # Predict m_hat and p_hat
+  m_hat <- predict(m_model, newdata = discovery$X, type = "prob")[, 2]
+  p.score_itt <- glm(discovery$Z ~ ., family = binomial, data = discovery$X)
+  pihat_itt <- predict(p.score_itt, type = "response")
+
+  transformed_Y <- (discovery$Z - pihat_itt) * (discovery$Y - m_hat) / (pihat_itt * (1 - pihat_itt))
+
+
+  # Note: Only regress transformed_Y on X, no need to include Z or W
+  itt_model_rf <- grfRemote::regression_forest(Y = transformed_Y, X = as.data.frame(discovery$X), num.trees = 2000)
+  itt <- itt_model_rf$predictions
+  pic_model <- grf::causal_forest(Y = discovery$W, W = discovery$Z, X = discovery$X, num.trees = 2000)
+  pic <- pic_model$predictions
+  eps <- 0.001
+  keep <- is.finite(itt) & is.finite(pic) & pic > eps
+  tauhat_clean <- itt[keep] / pic[keep]
+  exp <- data.frame(tauhat = tauhat_clean, discovery$X[keep, , drop = FALSE])
+
+  fit.tree <- rpart(tauhat ~ .,
+    data = exp,
+    minbucket = 65,
+    cp = 0.001,
+    maxdepth = 5
+  )
+
+
+  rules <- as.numeric(row.names(fit.tree$frame[fit.tree$numresp]))
+
+  # Initialize Outputs
+  ivMat <- as.data.frame(matrix(NA, nrow = length(rules), ncol = 10))
+  names(ivMat) <- c(
+    "node", "CCACE", "pvalue", "Weak_IV_test",
+    "Pi_obs", "ITT", "Pi_compliers",
+    "SE", "CI_lower", "CI_upper"
+  )
+  lvs <- leaves <- numeric(length(rules))
+  lvs[unique(fit.tree$where)] <- 1
+  leaves[rules[lvs == 1]] <- 1
+
+  # Run an IV Regression on the Root
+  iv.root <- AER::ivreg(Y ~ W | Z,
+    data = inference
+  )
+  summary <- summary(iv.root, diagnostics = TRUE)
+  iv.effect.root <- summary$coef[2, 1]
+  p.value.root <- summary$coef[2, 4]
+  p.value.weak.iv.root <- summary$diagnostics[1, 4]
+  proportion.root <- 1
+  compliers.root <- with(inference, mean(W[Z == 1]) - mean(W[Z == 0]))
+  # itt.root <- with(inference, mean(Y[Z == 1]) - mean(Y[Z == 0]))
+  itt.root <- iv.effect.root * compliers.root
+  se_ccace.root <- summary$coef[2, 2] # Standard error at root
+
+  # Compute 95% Confidence Interval
+  ci_lower_root <- iv.effect.root - 1.96 * se_ccace.root
+  ci_upper_root <- iv.effect.root + 1.96 * se_ccace.root
+
+
+  # Store Results for Root
+  ivMat[1, ] <- c(
+    NA, round(iv.effect.root, 4),
+    round(p.value.root, 4),
+    round(p.value.weak.iv.root, 4),
+    round(proportion.root, 4),
+    round(itt.root, 4),
+    round(compliers.root, 4),
+    round(se_ccace.root, 4),
+    round(ci_lower_root, 4),
+    round(ci_upper_root, 4)
+  )
+  names(inference) <- paste(names(inference), sep = "")
+
+  # Run a loop to get the rules (sub-populations)
+  for (i in rules[-1]) {
+    sub <- as.data.frame(matrix(NA,
+      nrow = 1,
+      ncol = nrow(as.data.frame(path.rpart(fit.tree, node = i, print.it = FALSE))) - 1
+    ))
+    quiet(capture.output(for (j in 1:ncol(sub)) {
+      sub[, j] <- as.character(print(as.data.frame(path.rpart(fit.tree, node = i, print.it = FALSE))[j + 1, 1]))
+      sub_pop <- noquote(paste(sub, collapse = " & "))
+    }))
+
+    subset <- with(inference_combined, inference_combined[which(eval(parse(text = sub_pop))), ])
+
+    if (nrow(subset) > 3 &&
+      length(unique(subset$W)) > 1 &&
+      length(unique(subset$Z)) > 1 &&
+      all(!is.na(subset$Y)) && all(!is.na(subset$W)) && all(!is.na(subset$Z))) {
+      X_model <- tryCatch(model.matrix(~ W | Z, data = subset), error = function(e) return(NULL))
+      if (is.null(X_model) || qr(X_model)$rank < ncol(X_model)) {
+        message("Skipping node: ", sub_pop, " due to rank-deficient model matrix.")
+        next
+      }
+
+      iv.reg <- tryCatch(
+        {
+          AER::ivreg(Y ~ W | Z, data = subset)
+        },
+        error = function(e) {
+          message("IV regression failed for node: ", sub_pop, " - Skipping...")
+          return(NULL)
+        }
+      )
+
+      if (!is.null(iv.reg)) {
+        summary <- tryCatch(
+          {
+            summary(iv.reg, diagnostics = TRUE)
+          },
+          error = function(e) {
+            message("Summary failed for node: ", sub_pop, " - Skipping...")
+            return(NULL)
+          }
+        )
+
+        if (!is.null(summary) && summary$df[2] > 0) {
+          iv.effect <- summary$coef[2, 1]
+          se_ccace <- summary$coef[2, 2]
+          ci_lower <- iv.effect - 1.96 * se_ccace
+          ci_upper <- iv.effect + 1.96 * se_ccace
+
+          p.value <- summary$coef[2, 4]
+          p.value.weak.iv <- summary$diagnostics[1, 4]
+          compliers <- with(subset, mean(W[Z == 1]) - mean(W[Z == 0]))
+          itt <- iv.effect * compliers
+          proportion.node <- nrow(subset) / nrow(inference$X)
+
+          ivMat[i, ] <- c(
+            sub_pop,
+            round(iv.effect, 4),
+            round(p.value, 4),
+            round(p.value.weak.iv, 4),
+            round(proportion.node, 4),
+            round(itt, 4),
+            round(compliers, 4),
+            round(se_ccace, 4),
+            round(ci_lower, 4),
+            round(ci_upper, 4)
+          )
+        } else {
+          message("Skipping node: ", sub_pop, " due to zero residual degrees of freedom.")
+        }
+      }
+    } else {
+      message("Skipping node: ", sub_pop, " due to missing values, small sample size, or lack of variation.")
+    }
+    # Delete data
+    rm(subset)
+  }
+  # 1. Keep only valid rows (non-NA effect estimates)
+  ivMat_clean <- ivMat[!is.na(ivMat$CCACE), ]
+
+  # 2. Get correct indices for the corresponding leaf flags
+  valid_row_indices <- as.numeric(rownames(ivMat_clean))
+  leaves_clean <- leaves[valid_row_indices]
+
+  # 3. Combine cleaned results with leaf info
+  iv_correction <- cbind(ivMat_clean, leaf = leaves_clean)
+
+  # 4. Adjust p-values for actual leaves
+  leaf_indices <- which(iv_correction$leaf == 1)
+  pvals_to_adjust <- as.numeric(iv_correction$pvalue[leaf_indices])
+
+  # Safe adjustment
+  if (length(pvals_to_adjust) > 0) {
+    adj_p <- round(p.adjust(pvals_to_adjust, method = adj_method), 5)
+    Adj_pvalue <- rep(NA, nrow(iv_correction))
+    Adj_pvalue[leaf_indices] <- adj_p
+  } else {
+    Adj_pvalue <- rep(NA, nrow(iv_correction))
+    message("No leaf p-values to adjust.")
+  }
+
+  # Final results
+  ivResults <- cbind(iv_correction, Adj_pvalue)
+  # Return Results
+  return(list(results = ivResults, discovery = discovery, inference = inference))
+}
+
+
 time_block <- function(expr) {
-  
   t0 <- proc.time()
-  
+
   val <- eval.parent(
     substitute(expr)
   )
-  
+
   elapsed <- (proc.time() - t0)[["elapsed"]]
-  
+
   list(
     value = val,
     elapsed = as.numeric(elapsed)
   )
 }
-
 DRRF_IV_tb <- function(Y, W, Z, X) {
-  
   timings <- list()
-  
+
   tb <- time_block({
     p.score <- glm(Z ~ ., family = binomial, data = X)
     pihat <- predict(p.score, type = "response")
   })
   timings$propensity <- tb$elapsed
-  
+
   tb <- time_block({
     valid_idx <- which(pihat > 0 & pihat < 1)
-    subset_data <- list(Y=Y[valid_idx], W=W[valid_idx], Z=Z[valid_idx], X=X[valid_idx,], pihat=pihat[valid_idx])
-    
+    subset_data <- list(Y = Y[valid_idx], W = W[valid_idx], Z = Z[valid_idx], X = X[valid_idx, ], pihat = pihat[valid_idx])
+
     n_valid <- length(subset_data$Y)
     discovery_id <- sample(n_valid, size = floor(0.5 * n_valid))
     inference_id <- setdiff(1:n_valid, discovery_id)
-    
+
     discovery <- list(
-      Y=subset_data$Y[discovery_id], W=subset_data$W[discovery_id], Z=subset_data$Z[discovery_id],
-      X=subset_data$X[discovery_id,], pihat=subset_data$pihat[discovery_id]
+      Y = subset_data$Y[discovery_id], W = subset_data$W[discovery_id], Z = subset_data$Z[discovery_id],
+      X = subset_data$X[discovery_id, ], pihat = subset_data$pihat[discovery_id]
     )
     inference <- list(
-      Y=subset_data$Y[inference_id], W=subset_data$W[inference_id], Z=subset_data$Z[inference_id],
-      X=subset_data$X[inference_id,], pihat=subset_data$pihat[inference_id]
+      Y = subset_data$Y[inference_id], W = subset_data$W[inference_id], Z = subset_data$Z[inference_id],
+      X = subset_data$X[inference_id, ], pihat = subset_data$pihat[inference_id]
     )
-    
-    inference_combined <- data.frame(Y=inference$Y, W=inference$W, Z=inference$Z, inference$X, pihat=inference$pihat)
+
+    inference_combined <- data.frame(Y = inference$Y, W = inference$W, Z = inference$Z, inference$X, pihat = inference$pihat)
   })
   timings$split_trim <- tb$elapsed
-  
+
   tb <- time_block({
     m_model <- randomForest::randomForest(x = as.data.frame(discovery$X), y = discovery$Y)
     m_hat <- predict(m_model)
     transformed_Y <- (discovery$Z - discovery$pihat) * (discovery$Y - m_hat) / (discovery$pihat * (1 - discovery$pihat))
   })
   timings$nuisance_m <- tb$elapsed
-  
+
   tb <- time_block({
-    itt_model_rf <- grfRemote::regression_forest(Y=transformed_Y, X=as.data.frame(discovery$X), num.trees=2000)
+    itt_model_rf <- grfRemote::regression_forest(Y = transformed_Y, X = as.data.frame(discovery$X), num.trees = 2000)
     itt <- itt_model_rf$predictions
   })
   timings$itt_forest <- tb$elapsed
-  
+
   tb <- time_block({
-    pic_model <- grf::causal_forest(Y=discovery$W, W=discovery$Z, X=discovery$X, num.trees=2000)
+    pic_model <- grf::causal_forest(Y = discovery$W, W = discovery$Z, X = discovery$X, num.trees = 2000)
     pic <- pic_model$predictions
   })
   timings$pic_forest <- tb$elapsed
-  
+
   tb <- time_block({
     epsilon <- 1e-6
     tauhat <- itt / (pic + epsilon)
     exp_data <- as.data.frame(cbind(tauhat, as.data.frame(discovery$X)))
-    fit.tree <- rpart::rpart(tauhat ~ ., data = exp_data, maxdepth = 2, cp=0.001)
+    fit.tree <- rpart::rpart(tauhat ~ ., data = exp_data, maxdepth = 2, cp = 0.001)
     rules <- as.numeric(row.names(fit.tree$frame[fit.tree$numresp]))
   })
   timings$tree <- tb$elapsed
-  
+
   tb <- time_block({
     rules <- as.numeric(row.names(fit.tree$frame[fit.tree$numresp]))
-    
+
     # Initialize Outputs
-    #ivMat <- as.data.frame(matrix(NA, nrow = length(rules), ncol=7))
-    #names(ivMat) <- c("node", "CCACE", "pvalue", "Weak_IV_test", "Pi_obs", "ITT", "Pi_compliers")
+    # ivMat <- as.data.frame(matrix(NA, nrow = length(rules), ncol=7))
+    # names(ivMat) <- c("node", "CCACE", "pvalue", "Weak_IV_test", "Pi_obs", "ITT", "Pi_compliers")
     ivMat <- as.data.frame(matrix(NA, nrow = length(rules), ncol = 10))
-    names(ivMat) <- c("node", "CCACE", "pvalue", "Weak_IV_test",
-                      "Pi_obs", "ITT", "Pi_compliers",
-                      "SE", "CI_lower", "CI_upper")
-    #names(ivMat) <- c("node", "CCACE", "pvalue", "Weak_IV_test", "Pi_obs", "ITT", "Pi_compliers", "ci_lower", "ci_upper")
+    names(ivMat) <- c(
+      "node", "CCACE", "pvalue", "Weak_IV_test",
+      "Pi_obs", "ITT", "Pi_compliers",
+      "SE", "CI_lower", "CI_upper"
+    )
+    # names(ivMat) <- c("node", "CCACE", "pvalue", "Weak_IV_test", "Pi_obs", "ITT", "Pi_compliers", "ci_lower", "ci_upper")
     # Generate Leaves Indicator
-    lvs <- leaves <- numeric(length(rules)) 
+    lvs <- leaves <- numeric(length(rules))
     lvs[unique(fit.tree$where)] <- 1
-    leaves[rules[lvs==1]] <- 1
-    
+    leaves[rules[lvs == 1]] <- 1
+
     ######################################################
     ####  Step 4: Run an IV Regression on each Node   ####
     ######################################################
-    
-    
+
+
     # Run an IV Regression on the Root
-    iv.root <- AER::ivreg(Y ~ W | Z,  
-                          data = inference)
+    iv.root <- AER::ivreg(Y ~ W | Z,
+      data = inference
+    )
     summary <- summary(iv.root, diagnostics = TRUE)
-    iv.effect.root <-  summary$coef[2,1]
-    p.value.root <- summary$coef[2,4]
-    p.value.weak.iv.root <- summary$diagnostics[1,4]
+    iv.effect.root <- summary$coef[2, 1]
+    p.value.root <- summary$coef[2, 4]
+    p.value.weak.iv.root <- summary$diagnostics[1, 4]
     proportion.root <- 1
-    compliers.root <- length(which(inference$Z==inference$W))/nrow(inference$X)
-    itt.root <- iv.effect.root*compliers.root
-    
-    se_ccace.root <- summary$coef[2,2]   # Standard error at root
-    
+    compliers.root <- length(which(inference$Z == inference$W)) / nrow(inference$X)
+    itt.root <- iv.effect.root * compliers.root
+
+    se_ccace.root <- summary$coef[2, 2] # Standard error at root
+
     # Compute 95% Confidence Interval
     ci_lower_root <- iv.effect.root - 1.96 * se_ccace.root
     ci_upper_root <- iv.effect.root + 1.96 * se_ccace.root
-    
-    
+
+
     # Store Results for Root
     #  ivMat[1,] <- c( NA , round(iv.effect.root, 4), round(p.value.root, 4), round(p.value.weak.iv.root, 4), round(proportion.root, 4), round(itt.root, 4), round(compliers.root, 4))
-    # ivMat[1,] <- c(NA, round(iv.effect.root, 4), round(p.value.root, 4), round(p.value.weak.iv.root, 4), 
+    # ivMat[1,] <- c(NA, round(iv.effect.root, 4), round(p.value.root, 4), round(p.value.weak.iv.root, 4),
     #               round(proportion.root, 4), round(itt.root, 4), round(compliers.root, 4))    # Initialize New Data
-    ivMat[1,] <- c(NA, round(iv.effect.root, 4),
-                   round(p.value.root, 4),
-                   round(p.value.weak.iv.root, 4),
-                   round(proportion.root, 4),
-                   round(itt.root, 4),
-                   round(compliers.root, 4),
-                   round(se_ccace.root, 4),
-                   round(ci_lower_root, 4),
-                   round(ci_upper_root, 4))
-    names(inference) <- paste(names(inference), sep="")
-    
+    ivMat[1, ] <- c(
+      NA, round(iv.effect.root, 4),
+      round(p.value.root, 4),
+      round(p.value.weak.iv.root, 4),
+      round(proportion.root, 4),
+      round(itt.root, 4),
+      round(compliers.root, 4),
+      round(se_ccace.root, 4),
+      round(ci_lower_root, 4),
+      round(ci_upper_root, 4)
+    )
+    names(inference) <- paste(names(inference), sep = "")
+
     # Run a loop to get the rules (sub-populations)
     for (i in rules[-1]) {
-      sub <- as.data.frame(matrix(NA, nrow = 1,
-                                  ncol = nrow(as.data.frame(path.rpart(fit.tree, node = i, print.it = FALSE))) - 1))
+      sub <- as.data.frame(matrix(NA,
+        nrow = 1,
+        ncol = nrow(as.data.frame(path.rpart(fit.tree, node = i, print.it = FALSE))) - 1
+      ))
       quiet(capture.output(for (j in 1:ncol(sub)) {
         sub[, j] <- as.character(print(as.data.frame(path.rpart(fit.tree, node = i, print.it = FALSE))[j + 1, 1]))
         sub_pop <- noquote(paste(sub, collapse = " & "))
       }))
-      
+
       subset <- with(inference_combined, inference_combined[which(eval(parse(text = sub_pop))), ])
-      
+
       if (nrow(subset) > 3 &&
-          length(unique(subset$W)) > 1 &&
-          length(unique(subset$Z)) > 1 &&
-          all(!is.na(subset$Y)) && all(!is.na(subset$W)) && all(!is.na(subset$Z))) {
-        
+        length(unique(subset$W)) > 1 &&
+        length(unique(subset$Z)) > 1 &&
+        all(!is.na(subset$Y)) && all(!is.na(subset$W)) && all(!is.na(subset$Z))) {
         X_model <- tryCatch(model.matrix(~ W | Z, data = subset), error = function(e) return(NULL))
         if (is.null(X_model) || qr(X_model)$rank < ncol(X_model)) {
           message("Skipping node: ", sub_pop, " due to rank-deficient model matrix.")
           next
         }
-        
-        iv.reg <- tryCatch({
-          AER::ivreg(Y ~ W | Z, data = subset)
-        }, error = function(e) {
-          message("IV regression failed for node: ", sub_pop, " - Skipping...")
-          return(NULL)
-        })
-        
-        if (!is.null(iv.reg)) {
-          summary <- tryCatch({
-            summary(iv.reg, diagnostics = TRUE)
-          }, error = function(e) {
-            message("Summary failed for node: ", sub_pop, " - Skipping...")
+
+        iv.reg <- tryCatch(
+          {
+            AER::ivreg(Y ~ W | Z, data = subset)
+          },
+          error = function(e) {
+            message("IV regression failed for node: ", sub_pop, " - Skipping...")
             return(NULL)
-          })
-          
+          }
+        )
+
+        if (!is.null(iv.reg)) {
+          summary <- tryCatch(
+            {
+              summary(iv.reg, diagnostics = TRUE)
+            },
+            error = function(e) {
+              message("Summary failed for node: ", sub_pop, " - Skipping...")
+              return(NULL)
+            }
+          )
+
           if (!is.null(summary) && summary$df[2] > 0) {
             iv.effect <- summary$coef[2, 1]
             se_ccace <- summary$coef[2, 2]
             ci_lower <- iv.effect - 1.96 * se_ccace
             ci_upper <- iv.effect + 1.96 * se_ccace
-            
+
             p.value <- summary$coef[2, 4]
             p.value.weak.iv <- summary$diagnostics[1, 4]
             compliers <- length(which(subset$Z == subset$W)) / nrow(subset)
             itt <- iv.effect * compliers
             proportion.node <- nrow(subset) / nrow(inference$X)
-            
-            ivMat[i, ] <- c(sub_pop,
-                            round(iv.effect, 4),
-                            round(p.value, 4),
-                            round(p.value.weak.iv, 4),
-                            round(proportion.node, 4),
-                            round(itt, 4),
-                            round(compliers, 4),
-                            round(se_ccace, 4),
-                            round(ci_lower, 4),
-                            round(ci_upper, 4))
+
+            ivMat[i, ] <- c(
+              sub_pop,
+              round(iv.effect, 4),
+              round(p.value, 4),
+              round(p.value.weak.iv, 4),
+              round(proportion.node, 4),
+              round(itt, 4),
+              round(compliers, 4),
+              round(se_ccace, 4),
+              round(ci_lower, 4),
+              round(ci_upper, 4)
+            )
           } else {
             message("Skipping node: ", sub_pop, " due to zero residual degrees of freedom.")
           }
@@ -819,38 +1657,37 @@ DRRF_IV_tb <- function(Y, W, Z, X) {
       } else {
         message("Skipping node: ", sub_pop, " due to missing values, small sample size, or lack of variation.")
       }
-    }    
-    # Adjust P.values 
+    }
+    # Adjust P.values
     iv_correction <- cbind(as.data.frame(ivMat), leaves)
-    adj <- round(p.adjust( as.numeric(iv_correction$pvalue[which(iv_correction$leaves==1)]) ,  paste(adj_method)), 5)
-    Adj_pvalue <- rep(NA, length(rules)) 
-    Adj_pvalue[which(iv_correction$leaves==1)] <- adj
-    
+    adj <- round(p.adjust(as.numeric(iv_correction$pvalue[which(iv_correction$leaves == 1)]), paste(adj_method)), 5)
+    Adj_pvalue <- rep(NA, length(rules))
+    Adj_pvalue[which(iv_correction$leaves == 1)] <- adj
+
     # Store Results
     ivResults <- cbind(as.data.frame(ivMat), Adj_pvalue)
   })
   timings$node_iv <- tb$elapsed
-  
+
   timings$total <- sum(unlist(timings), na.rm = TRUE)
-  
+
   list(results = ivResults, discovery = discovery, inference = inference, pic = pic, timings = timings)
 }
 GRF_IV_tb <- function(Y, W, Z, X, sim_id = NULL) {
-  
   # optional: reproducible split per replicate
   if (!is.null(sim_id)) set.seed(1000 + sim_id)
-  
+
   timings <- list()
-  
+
   tb <- time_block({
     p.score <- glm(Z ~ ., family = binomial, data = X)
     pihat <- predict(p.score, type = "response")
   })
   timings$propensity <- tb$elapsed
-  
+
   tb <- time_block({
     valid_idx <- which(pihat > 0 & pihat < 1)
-    
+
     subset_data <- list(
       Y = Y[valid_idx],
       W = W[valid_idx],
@@ -858,12 +1695,12 @@ GRF_IV_tb <- function(Y, W, Z, X, sim_id = NULL) {
       X = X[valid_idx, ],
       pihat = pihat[valid_idx]
     )
-    
+
     n_valid <- length(subset_data$Y)
-    
+
     discovery_id <- sample(n_valid, size = floor(0.5 * n_valid))
     inference_id <- setdiff(1:n_valid, discovery_id)
-    
+
     discovery <- list(
       Y = subset_data$Y[discovery_id],
       W = subset_data$W[discovery_id],
@@ -871,7 +1708,7 @@ GRF_IV_tb <- function(Y, W, Z, X, sim_id = NULL) {
       X = subset_data$X[discovery_id, ],
       pihat = subset_data$pihat[discovery_id]
     )
-    
+
     inference <- list(
       Y = subset_data$Y[inference_id],
       W = subset_data$W[inference_id],
@@ -879,7 +1716,7 @@ GRF_IV_tb <- function(Y, W, Z, X, sim_id = NULL) {
       X = subset_data$X[inference_id, ],
       pihat = subset_data$pihat[inference_id]
     )
-    
+
     inference_combined <- data.frame(
       Y = inference$Y,
       W = inference$W,
@@ -889,7 +1726,7 @@ GRF_IV_tb <- function(Y, W, Z, X, sim_id = NULL) {
     )
   })
   timings$split_trim <- tb$elapsed
-  
+
   tb <- time_block({
     iv_forest <- grf::instrumental_forest(
       X = as.data.frame(discovery$X),
@@ -902,144 +1739,151 @@ GRF_IV_tb <- function(Y, W, Z, X, sim_id = NULL) {
     tauhat <- predict(iv_forest)$predictions
   })
   timings$iv_forest <- tb$elapsed
-  
+
   tb <- time_block({
     exp <- as.data.frame(cbind(tauhat, as.data.frame(discovery$X)))
     fit.tree <- rpart::rpart(tauhat ~ ., data = exp, maxdepth = 2, cp = 0.001)
     rules <- as.numeric(row.names(fit.tree$frame[fit.tree$numresp]))
   })
   timings$tree <- tb$elapsed
-  
+
   tb <- time_block({
     ivMat <- as.data.frame(matrix(NA, nrow = length(rules), ncol = 10))
-    names(ivMat) <- c("node", "CCACE", "pvalue", "Weak_IV_test",
-                      "Pi_obs", "ITT", "Pi_compliers",
-                      "SE", "CI_lower", "CI_upper")
-    
+    names(ivMat) <- c(
+      "node", "CCACE", "pvalue", "Weak_IV_test",
+      "Pi_obs", "ITT", "Pi_compliers",
+      "SE", "CI_lower", "CI_upper"
+    )
+
     lvs <- leaves <- numeric(length(rules))
     lvs[unique(fit.tree$where)] <- 1
     leaves[rules[lvs == 1]] <- 1
-    
+
     # Root IV regression
     iv.root <- AER::ivreg(Y ~ W | Z, data = inference)
     summary_root <- summary(iv.root, diagnostics = TRUE)
-    
+
     iv.effect.root <- summary_root$coef[2, 1]
-    se_ccace.root  <- summary_root$coef[2, 2]
-    p.value.root   <- summary_root$coef[2, 4]
+    se_ccace.root <- summary_root$coef[2, 2]
+    p.value.root <- summary_root$coef[2, 4]
     p.value.weak.iv.root <- summary_root$diagnostics[1, 4]
-    
+
     proportion.root <- 1
     compliers.root <- length(which(inference$Z == inference$W)) / nrow(inference$X)
     itt.root <- iv.effect.root * compliers.root
-    
+
     ci_lower_root <- iv.effect.root - 1.96 * se_ccace.root
     ci_upper_root <- iv.effect.root + 1.96 * se_ccace.root
-    
-    ivMat[1,] <- c(NA, round(iv.effect.root, 4),
-                   round(p.value.root, 4),
-                   round(p.value.weak.iv.root, 4),
-                   round(proportion.root, 4),
-                   round(itt.root, 4),
-                   round(compliers.root, 4),
-                   round(se_ccace.root, 4),
-                   round(ci_lower_root, 4),
-                   round(ci_upper_root, 4))
-    
+
+    ivMat[1, ] <- c(
+      NA, round(iv.effect.root, 4),
+      round(p.value.root, 4),
+      round(p.value.weak.iv.root, 4),
+      round(proportion.root, 4),
+      round(itt.root, 4),
+      round(compliers.root, 4),
+      round(se_ccace.root, 4),
+      round(ci_lower_root, 4),
+      round(ci_upper_root, 4)
+    )
+
     # Node-wise IV regressions
     for (node_id in rules[-1]) {
-      
-      sub <- as.data.frame(matrix(NA, nrow = 1,
-                                  ncol = nrow(as.data.frame(rpart::path.rpart(fit.tree, node = node_id, print.it = FALSE))) - 1))
-      
+      sub <- as.data.frame(matrix(NA,
+        nrow = 1,
+        ncol = nrow(as.data.frame(rpart::path.rpart(fit.tree, node = node_id, print.it = FALSE))) - 1
+      ))
+
       quiet(capture.output(for (j in 1:ncol(sub)) {
         sub[, j] <- as.character(print(as.data.frame(rpart::path.rpart(fit.tree, node = node_id, print.it = FALSE))[j + 1, 1]))
         sub_pop <- noquote(paste(sub, collapse = " & "))
       }))
-      
+
       subset <- with(inference_combined, inference_combined[which(eval(parse(text = sub_pop))), ])
-      
+
       if (nrow(subset) > 3 &&
-          length(unique(subset$W)) > 1 &&
-          length(unique(subset$Z)) > 1 &&
-          all(!is.na(subset$Y)) && all(!is.na(subset$W)) && all(!is.na(subset$Z))) {
-        
+        length(unique(subset$W)) > 1 &&
+        length(unique(subset$Z)) > 1 &&
+        all(!is.na(subset$Y)) && all(!is.na(subset$W)) && all(!is.na(subset$Z))) {
         X_model <- tryCatch(model.matrix(~ W | Z, data = subset), error = function(e) NULL)
         if (is.null(X_model) || qr(X_model)$rank < ncol(X_model)) next
-        
+
         iv.reg <- tryCatch(AER::ivreg(Y ~ W | Z, data = subset), error = function(e) NULL)
         if (is.null(iv.reg)) next
-        
+
         summary_node <- tryCatch(summary(iv.reg, diagnostics = TRUE), error = function(e) NULL)
         if (is.null(summary_node) || summary_node$df[2] <= 0) next
-        
+
         iv.effect <- summary_node$coef[2, 1]
-        se_ccace  <- summary_node$coef[2, 2]
-        p.value   <- summary_node$coef[2, 4]
+        se_ccace <- summary_node$coef[2, 2]
+        p.value <- summary_node$coef[2, 4]
         p.value.weak.iv <- summary_node$diagnostics[1, 4]
-        
+
         ci_lower <- iv.effect - 1.96 * se_ccace
         ci_upper <- iv.effect + 1.96 * se_ccace
-        
+
         compliers <- length(which(subset$Z == subset$W)) / nrow(subset)
         itt <- iv.effect * compliers
         proportion.node <- nrow(subset) / nrow(inference$X)
-        
-        ivMat[node_id, ] <- c(sub_pop,
-                              round(iv.effect, 4),
-                              round(p.value, 4),
-                              round(p.value.weak.iv, 4),
-                              round(proportion.node, 4),
-                              round(itt, 4),
-                              round(compliers, 4),
-                              round(se_ccace, 4),
-                              round(ci_lower, 4),
-                              round(ci_upper, 4))
+
+        ivMat[node_id, ] <- c(
+          sub_pop,
+          round(iv.effect, 4),
+          round(p.value, 4),
+          round(p.value.weak.iv, 4),
+          round(proportion.node, 4),
+          round(itt, 4),
+          round(compliers, 4),
+          round(se_ccace, 4),
+          round(ci_lower, 4),
+          round(ci_upper, 4)
+        )
       }
     }
-    
+
     # needs adj_method to exist (global) or pass it in
     iv_correction <- cbind(as.data.frame(ivMat), leaves)
-    adj <- round(p.adjust(as.numeric(iv_correction$pvalue[which(iv_correction$leaves == 1)]),
-                          paste(adj_method)), 5)
+    adj <- round(p.adjust(
+      as.numeric(iv_correction$pvalue[which(iv_correction$leaves == 1)]),
+      paste(adj_method)
+    ), 5)
     Adj_pvalue <- rep(NA, length(rules))
     Adj_pvalue[which(iv_correction$leaves == 1)] <- adj
-    
+
     ivResults <- cbind(as.data.frame(ivMat), Adj_pvalue)
   })
   timings$node_iv <- tb$elapsed
-  
+
   timings$total <- sum(unlist(timings), na.rm = TRUE)
-  
+
   list(results = ivResults, discovery = discovery, inference = inference, timings = timings)
 }
 
 BCF_IV_tb <- function(Y, W, Z, X, binary = FALSE, sim_id = NULL,
-                            n_samples_pic = 500, n_burn_pic = 500, n_chains_pic = 2L,
-                            nburn_bcf = 500, nsim_bcf = 500,
-                            n_samples_itt = 300, n_burn_itt = 300, n_chains_itt = 2L) {
-  
+                      n_samples_pic = 500, n_burn_pic = 500, n_chains_pic = 2L,
+                      nburn_bcf = 500, nsim_bcf = 500,
+                      n_samples_itt = 300, n_burn_itt = 300, n_chains_itt = 2L) {
   timings <- list()
-    tb <- time_block({
+  tb <- time_block({
     index <- sample(nrow(X), nrow(X) * 0.5, replace = FALSE)
-    
+
     iv.data <- as.data.frame(cbind(Y, W, Z, X))
     names(iv.data)[1:3] <- c("Y", "W", "Z")
     iv.data <- iv.data %>%
       dplyr::mutate(dplyr::across(c(W, Z, dplyr::starts_with("X")), as.numeric))
-    
+
     discovery <- iv.data[-index, ]
     inference <- iv.data[index, ]
     discovery_X <- discovery[, 4:ncol(iv.data), drop = FALSE]
   })
   timings$split <- tb$elapsed
-  
+
   tb <- time_block({
     p.score <- glm(discovery$Z ~ ., family = binomial, data = as.data.frame(discovery_X))
     pihat <- predict(p.score, type = "response")
   })
   timings$propensity <- tb$elapsed
-  
+
   # ---- PIC via bartCause::bartc ----
   tb <- time_block({
     pic_bcf <- quiet(
@@ -1052,9 +1896,8 @@ BCF_IV_tb <- function(Y, W, Z, X, binary = FALSE, sim_id = NULL,
     pic <- apply(tau_pic, 2, mean)
   })
   timings$pic_bart <- tb$elapsed
-  
+
   if (binary == FALSE) {
-    
     tb <- time_block({
       bcf_fit <- SparseBCF::SparseBCF(
         y = discovery$Y,
@@ -1075,7 +1918,7 @@ BCF_IV_tb <- function(Y, W, Z, X, binary = FALSE, sim_id = NULL,
       exp <- as.data.frame(cbind(tauhat, discovery_X))
     })
     timings$sparsebcf <- tb$elapsed
-    
+
     tb <- time_block({
       fit.tree <- rpart::rpart(
         tauhat ~ .,
@@ -1086,33 +1929,35 @@ BCF_IV_tb <- function(Y, W, Z, X, binary = FALSE, sim_id = NULL,
       rules <- as.numeric(row.names(fit.tree$frame[fit.tree$numresp]))
     })
     timings$tree <- tb$elapsed
-    
+
     tb <- time_block({
       bcfivMat <- as.data.frame(matrix(NA, nrow = length(rules), ncol = 10))
-      names(bcfivMat) <- c("node", "CCACE", "pvalue", "Weak_IV_test",
-                           "Pi_obs", "ITT", "Pi_compliers",
-                           "SE", "CI_lower", "CI_upper")
-      
+      names(bcfivMat) <- c(
+        "node", "CCACE", "pvalue", "Weak_IV_test",
+        "Pi_obs", "ITT", "Pi_compliers",
+        "SE", "CI_lower", "CI_upper"
+      )
+
       lvs <- leaves <- numeric(length(rules))
       lvs[unique(fit.tree$where)] <- 1
       leaves[rules[lvs == 1]] <- 1
-      
+
       # Root
       iv.root <- AER::ivreg(Y ~ W | Z, data = inference)
       summ.root <- summary(iv.root, diagnostics = TRUE)
-      
+
       iv.effect.root <- summ.root$coef[2, 1]
       se.root <- summ.root$coef[2, 2]
       p.value.root <- summ.root$coef[2, 4]
       p.value.weak.iv.root <- summ.root$diagnostics[1, 4]
-      
+
       proportion.root <- 1
       compliers.root <- length(which(inference$Z == inference$W)) / nrow(inference)
       itt.root <- iv.effect.root * compliers.root
-      
+
       ci_lower_root <- iv.effect.root - 1.96 * se.root
       ci_upper_root <- iv.effect.root + 1.96 * se.root
-      
+
       bcfivMat[1, ] <- c(
         NA,
         round(iv.effect.root, 4),
@@ -1125,49 +1970,49 @@ BCF_IV_tb <- function(Y, W, Z, X, binary = FALSE, sim_id = NULL,
         round(ci_lower_root, 4),
         round(ci_upper_root, 4)
       )
-      
+
       # Loop over nodes
       for (node_id in rules[-1]) {
-        
         sub <- as.data.frame(matrix(
-          NA, nrow = 1,
+          NA,
+          nrow = 1,
           ncol = nrow(as.data.frame(rpart::path.rpart(fit.tree, node = node_id, print.it = FALSE))) - 1
         ))
-        
+
         quiet(capture.output(for (jj in 1:ncol(sub)) {
           sub[, jj] <- as.character(print(as.data.frame(rpart::path.rpart(
-            fit.tree, node = node_id, print.it = FALSE
+            fit.tree,
+            node = node_id, print.it = FALSE
           ))[jj + 1, 1]))
           sub_pop <- noquote(paste(sub, collapse = " & "))
         }))
-        
+
         subset <- with(inference, inference[which(eval(parse(text = sub_pop))), ])
-        
+
         if (nrow(subset) > 3 &&
-            length(unique(subset$W)) > 1 &&
-            length(unique(subset$Z)) > 1) {
-          
+          length(unique(subset$W)) > 1 &&
+          length(unique(subset$Z)) > 1) {
           iv.reg <- tryCatch(
             AER::ivreg(Y ~ W | Z, data = subset),
             error = function(e) NULL
           )
-          
+
           if (!is.null(iv.reg)) {
             summ <- tryCatch(summary(iv.reg, diagnostics = TRUE), error = function(e) NULL)
-            
+
             if (!is.null(summ) && summ$df[2] > 0) {
               iv.effect <- summ$coef[2, 1]
               se <- summ$coef[2, 2]
               ci_lower <- iv.effect - 1.96 * se
               ci_upper <- iv.effect + 1.96 * se
-              
+
               p.value <- summ$coef[2, 4]
               p.value.weak.iv <- summ$diagnostics[1, 4]
-              
+
               compliers <- length(which(subset$Z == subset$W)) / nrow(subset)
               itt <- iv.effect * compliers
               proportion.node <- nrow(subset) / nrow(inference)
-              
+
               bcfivMat[node_id, ] <- c(
                 sub_pop,
                 round(iv.effect, 4),
@@ -1183,10 +2028,10 @@ BCF_IV_tb <- function(Y, W, Z, X, binary = FALSE, sim_id = NULL,
             }
           }
         }
-        
+
         rm(subset)
       }
-      
+
       # Adjust p-values
       bcfiv_correction <- cbind(as.data.frame(bcfivMat), leaves)
       adj <- round(
@@ -1195,13 +2040,13 @@ BCF_IV_tb <- function(Y, W, Z, X, binary = FALSE, sim_id = NULL,
       )
       Adj_pvalue <- rep(NA, length(rules))
       Adj_pvalue[which(bcfiv_correction$leaves == 1)] <- adj
-      
+
       bcfivResults <- cbind(as.data.frame(bcfivMat), Adj_pvalue)
     })
     timings$node_iv <- tb$elapsed
-    
+
     timings$total <- sum(unlist(timings), na.rm = TRUE)
-    
+
     return(list(
       results = bcfivResults,
       discovery = discovery,
@@ -1211,7 +2056,6 @@ BCF_IV_tb <- function(Y, W, Z, X, binary = FALSE, sim_id = NULL,
     ))
   }
   if (binary == TRUE) {
-    
     tb <- time_block({
       fit_itt <- quiet(
         bartCause::bartc(
@@ -1221,12 +2065,12 @@ BCF_IV_tb <- function(Y, W, Z, X, binary = FALSE, sim_id = NULL,
       )
       ites <- bartCause::extract(fit_itt, type = "ite")
       itt <- apply(ites, 2, mean)
-      
+
       tauhat <- itt / pic
       exp <- as.data.frame(cbind(tauhat, discovery_X))
     })
     timings$itt_bart <- tb$elapsed
-    
+
     tb <- time_block({
       fit.tree <- rpart::rpart(
         tauhat ~ .,
@@ -1237,26 +2081,26 @@ BCF_IV_tb <- function(Y, W, Z, X, binary = FALSE, sim_id = NULL,
       rules <- as.numeric(row.names(fit.tree$frame[fit.tree$numresp]))
     })
     timings$tree <- tb$elapsed
-    
+
     tb <- time_block({
       bcfivMat <- as.data.frame(matrix(NA, nrow = length(rules), ncol = 7))
       names(bcfivMat) <- c("node", "CCACE", "pvalue", "Weak_IV_test", "Pi_obs", "ITT", "Pi_compliers")
-      
+
       lvs <- leaves <- numeric(length(rules))
       lvs[unique(fit.tree$where)] <- 1
       leaves[rules[lvs == 1]] <- 1
-      
+
       iv.root <- AER::ivreg(Y ~ W | Z, data = inference)
       summ.root <- summary(iv.root, diagnostics = TRUE)
-      
+
       iv.effect.root <- summ.root$coef[2, 1]
       p.value.root <- summ.root$coef[2, 4]
       p.value.weak.iv.root <- summ.root$diagnostics[1, 4]
-      
+
       proportion.root <- 1
       compliers.root <- length(which(inference$Z == inference$W)) / nrow(inference)
       itt.root <- iv.effect.root * compliers.root
-      
+
       bcfivMat[1, ] <- c(
         NA,
         round(iv.effect.root, 4),
@@ -1266,40 +2110,41 @@ BCF_IV_tb <- function(Y, W, Z, X, binary = FALSE, sim_id = NULL,
         round(itt.root, 4),
         round(compliers.root, 4)
       )
-      
+
       for (node_id in rules[-1]) {
         sub <- as.data.frame(matrix(
-          NA, nrow = 1,
+          NA,
+          nrow = 1,
           ncol = nrow(as.data.frame(rpart::path.rpart(fit.tree, node = node_id, print.it = FALSE))) - 1
         ))
-        
+
         quiet(capture.output(for (jj in 1:ncol(sub)) {
           sub[, jj] <- as.character(print(as.data.frame(rpart::path.rpart(
-            fit.tree, node = node_id, print.it = FALSE
+            fit.tree,
+            node = node_id, print.it = FALSE
           ))[jj + 1, 1]))
           sub_pop <- noquote(paste(sub, collapse = " & "))
         }))
-        
+
         subset <- with(inference, inference[which(eval(parse(text = sub_pop))), ])
-        
+
         if (nrow(subset) > 3 &&
-            length(unique(subset$W)) > 1 &&
-            length(unique(subset$Z)) > 1) {
-          
+          length(unique(subset$W)) > 1 &&
+          length(unique(subset$Z)) > 1) {
           iv.reg <- tryCatch(AER::ivreg(Y ~ W | Z, data = subset), error = function(e) NULL)
-          
+
           if (!is.null(iv.reg)) {
             summ <- tryCatch(summary(iv.reg, diagnostics = TRUE), error = function(e) NULL)
-            
+
             if (!is.null(summ) && summ$df[2] > 0) {
               iv.effect <- summ$coef[2, 1]
               p.value <- summ$coef[2, 4]
               p.value.weak.iv <- summ$diagnostics[1, 4]
-              
+
               compliers <- length(which(subset$Z == subset$W)) / nrow(subset)
               itt_node <- iv.effect * compliers
               proportion.node <- nrow(subset) / nrow(inference)
-              
+
               bcfivMat[node_id, ] <- c(
                 sub_pop,
                 round(iv.effect, 4),
@@ -1312,10 +2157,10 @@ BCF_IV_tb <- function(Y, W, Z, X, binary = FALSE, sim_id = NULL,
             }
           }
         }
-        
+
         rm(subset)
       }
-      
+
       bcfiv_correction <- cbind(as.data.frame(bcfivMat), leaves)
       adj <- round(
         p.adjust(as.numeric(bcfiv_correction$pvalue[which(bcfiv_correction$leaves == 1)]), paste(adj_method)),
@@ -1323,13 +2168,13 @@ BCF_IV_tb <- function(Y, W, Z, X, binary = FALSE, sim_id = NULL,
       )
       Adj_pvalue <- rep(NA, length(rules))
       Adj_pvalue[which(bcfiv_correction$leaves == 1)] <- adj
-      
+
       bcfivResults <- cbind(as.data.frame(bcfivMat), Adj_pvalue)
     })
     timings$node_iv <- tb$elapsed
-    
+
     timings$total <- sum(unlist(timings), na.rm = TRUE)
-    
+
     return(list(
       results = bcfivResults,
       discovery = discovery,
@@ -1338,6 +2183,6 @@ BCF_IV_tb <- function(Y, W, Z, X, binary = FALSE, sim_id = NULL,
       timings = timings
     ))
   }
-  
+
   stop("binary must be TRUE or FALSE")
 }
