@@ -2,13 +2,7 @@
 
 The empirical application builds on the ICU pseudo-data provided by [Keele et al. (2020)](https://academic.oup.com/jrsssa/article/183/4/1501/7056438), based on the SPOTlight study, a prospective cohort of 13,011 adult patients from 48 UK hospitals (2010–2011).
 
-Since the original patient-level data cannot be publicly released, Keele et al. constructed a pseudo-dataset by resampling observations from the original study to approximate their distribution.
-
-The pseudo-data used in this application were obtained from the replication materials accompanying Keele et al. (2020).
-
-A related version of the ICU pseudo-data is available through the R package ivmodel. However, the package dataset does not include the 28-day mortality outcome (dead28) required for this application.
-
-The data are not redistributed in this repository. Researchers should consult the original publication and its associated replication materials to obtain the required data.
+Since the original patient-level data cannot be publicly released, Keele et al. constructed a pseudo-dataset by resampling observations from the original study to approximate their distribution.The pseudo-data used in this application were obtained from the replication materials accompanying Keele et al. (2020). A related version of the ICU pseudo-data is available through the [R package ivmodel](https://cran.r-project.org/web/packages/ivmodel/index.html). Researchers should consult the original publication and its associated replication materials to obtain the required data.
 
 ## Data Preprocessing
 
