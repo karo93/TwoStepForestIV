@@ -1,14 +1,30 @@
-cat > .gitignore << 'EOF'
+# RStudio
 .Rhistory
 .RData
 .Ruserdata
 .Rproj.user/
 
+# Simulation data and intermediate results
+simulation/data/
+simulation/raw_results/
+simulation/aggregated_results/
+
+# Application data and intermediate results
+application/data/*.rds
+application/raw_results/
+
+# Other data
 results/
 data/raw/
 
+# Data files
 *.RDS
 *.rds
 *.dta
+
+# Keep final dissertation outputs
+!output/**/*.rds
+!output/**/*.RDS
+
+# System files
 .DS_Store
-EOF
