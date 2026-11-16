@@ -83,6 +83,9 @@ TwoStepForestIV/
 └── .gitignore
 
 ```
-Simulation datasets are organized by sample size (N_2000 and N_10000). Raw simulation results are further grouped by estimation method (CF_IV, BCF_IV, and DRRF_IV) and sample size.
+Simulation datasets and intermediate results are not included in this repository. However, the final tables and figures reported in the paper are available in the output/ directory. Consequently, some directories shown above may not exist immediately after cloning the repository. They represent the intended directory structure for running the analyses and storing intermediate outputs.
 
-Data and generated results are not included in this repository. Consequently, some directories shown above may not exist immediately after cloning the repository. They represent the intended directory structure for running the analyses and storing the generated outputs.
+# Requirements
+
+* R (>= 4.3.0). Tested with R version 4.3.2.
+* Required R packages are installed using packages.R
