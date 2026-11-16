@@ -36,11 +36,41 @@ TwoStepForestIV/
 │   │       ├── N_2000/
 │   │       └── N_10000/
 │   ├── aggregated_results/
+│   │   ├── CF_IV/
+│   │   │   ├── N_2000/
+│   │   │   │   ├── MSE/
+│   │   │   │   ├── TPR/
+│   │   │   │   └── Results_per_id/
+│   │   │   └── N_10000/
+│   │   │       ├── MSE/
+│   │   │       ├── TPR/
+│   │   │       └── Results_per_id/
+│   │   ├── BCF_IV/
+│   │   │   ├── N_2000/
+│   │   │   │   ├── MSE/
+│   │   │   │   ├── TPR/
+│   │   │   │   └── Results_per_id/
+│   │   │   └── N_10000/
+│   │   │       ├── MSE/
+│   │   │       ├── TPR/
+│   │   │       └── Results_per_id/
+│   │   └── DRRF_IV/
+│   │       ├── N_2000/
+│   │       │   ├── MSE/
+│   │       │   ├── TPR/
+│   │       │   └── Results_per_id/
+│   │       └── N_10000/
+│   │           ├── MSE/
+│   │           ├── TPR/
+│   │           └── Results_per_id/
 │   └── *.R
 ├── application/
 │   ├── data/
 │   │   └── README.md
 │   ├── raw_results/
+│   │   ├── CF_IV/
+│   │   ├── BCF_IV/
+│   │   └── DRRF_IV/
 │   └── *.R
 ├── output/
 │   ├── sim_plots/
