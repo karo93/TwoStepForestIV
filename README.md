@@ -14,3 +14,45 @@ The main contribution is to make the discovery step model-agnostic, allowing dif
 * GRF-IV, which uses the instrumental-variable functionality of generalized random forests to estimate heterogeneous complier effects.
 
 The empirical application revisits an instrumental-variable study of prompt intensive care unit admission and 28-day mortality across UK National Health Service hospitals, with bed availability serving as the instrument.
+
+# Repository Structure
+
+The repository is organized into three main components: the simulation study, the empirical application, and the resulting figures and tables.
+```text
+
+TwoStepForestIV/
+├── simulation/
+│   ├── data/
+│   │   ├── N_2000/
+│   │   └── N_10000/
+│   ├── raw_results/
+│   │   ├── CF_IV/
+│   │   │   ├── N_2000/
+│   │   │   └── N_10000/
+│   │   ├── BCF_IV/
+│   │   │   ├── N_2000/
+│   │   │   └── N_10000/
+│   │   └── DRRF_IV/
+│   │       ├── N_2000/
+│   │       └── N_10000/
+│   ├── aggregated_results/
+│   └── *.R
+├── application/
+│   ├── data/
+│   │   └── README.md
+│   ├── raw_results/
+│   └── *.R
+├── output/
+│   ├── sim_plots/
+│   ├── sim_tables/
+│   ├── application_plots/
+│   └── application_tables/
+├── TwoStepForestIV.Rproj
+├── README.md
+├── LICENSE
+└── .gitignore
+
+```
+Simulation datasets are organized by sample size (N_2000 and N_10000). Raw simulation results are further grouped by estimation method (CF_IV, BCF_IV, and DRRF_IV) and sample size.
+
+Data and generated results are not included in this repository. Consequently, some directories shown above may not exist immediately after cloning the repository. They represent the intended directory structure for running the analyses and storing the generated outputs.
