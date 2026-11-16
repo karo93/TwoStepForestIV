@@ -22,7 +22,7 @@ data/raw/
 *.rds
 *.dta
 
-# Keep final dissertation outputs
+# Keep final outputs
 !output/**/*.rds
 !output/**/*.RDS
 
