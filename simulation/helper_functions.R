@@ -1564,12 +1564,7 @@ DRRF_IV_tb <- function(Y, W, Z, X) {
     ci_lower_root <- iv.effect.root - 1.96 * se_ccace.root
     ci_upper_root <- iv.effect.root + 1.96 * se_ccace.root
 
-
-    # Store Results for Root
-    #  ivMat[1,] <- c( NA , round(iv.effect.root, 4), round(p.value.root, 4), round(p.value.weak.iv.root, 4), round(proportion.root, 4), round(itt.root, 4), round(compliers.root, 4))
-    # ivMat[1,] <- c(NA, round(iv.effect.root, 4), round(p.value.root, 4), round(p.value.weak.iv.root, 4),
-    #               round(proportion.root, 4), round(itt.root, 4), round(compliers.root, 4))    # Initialize New Data
-    ivMat[1, ] <- c(
+   ivMat[1, ] <- c(
       NA, round(iv.effect.root, 4),
       round(p.value.root, 4),
       round(p.value.weak.iv.root, 4),
