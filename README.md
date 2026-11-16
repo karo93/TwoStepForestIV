@@ -85,7 +85,7 @@ TwoStepForestIV/
 ```
 Simulation datasets and intermediate results are not included in this repository. However, the final tables and figures reported in the paper are available in the output/ directory. Consequently, some directories shown above may not exist immediately after cloning the repository. They represent the intended directory structure for running the analyses and storing intermediate outputs.
 
-Requirements
+# Requirements
 
 * R (>= 4.3.0). Tested with R version 4.3.2.
 * Required R packages are installed using packages.R
